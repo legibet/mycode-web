@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0A1628" />
+  <script>
+    try {
+      const theme = localStorage.getItem('vite-ui-theme') || 'system'
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      const isLight = theme === 'light' || (theme === 'system' && !prefersDark)
+
+      if (isLight) {
+        document.documentElement.classList.add('light')
+        document.querySelector('meta[name="theme-color"]').content = '#F3F6FA'
+      }
+    } catch { }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Satoshi:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/favicon_slashes.svg" />
+  <title>mycode</title>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

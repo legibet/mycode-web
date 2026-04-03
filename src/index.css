@@ -1,0 +1,416 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Dark theme (default) ── Deep Ocean ── */
+  :root {
+    color-scheme: dark;
+    --background: 216 60% 10%; /* #0A1628 — deep navy */
+    --foreground: 210 25% 87%; /* #D4DEE8 — cool silver */
+    --card: 216 55% 11%; /* #0D1A2C */
+    --card-foreground: 210 25% 87%;
+    --popover: 216 55% 11%;
+    --popover-foreground: 210 25% 87%;
+    --primary: 210 25% 87%;
+    --primary-foreground: 216 60% 10%;
+    --secondary: 216 50% 13%; /* #111E30 */
+    --secondary-foreground: 210 20% 80%;
+    --muted: 216 45% 15%; /* #152236 */
+    --muted-foreground: 210 18% 50%; /* #6B8299 */
+    --accent: 204 50% 58%; /* #5BA4CF — ice blue */
+    --accent-foreground: 216 60% 8%;
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 216 40% 18%; /* #1A2A40 */
+    --input: 216 40% 18%;
+    --ring: 204 50% 58%;
+    --radius: 0.5rem;
+    --scrollbar-thumb: hsl(var(--border) / 0.9);
+    --scrollbar-thumb-hover: hsl(var(--muted-foreground) / 0.45);
+    --scrollbar-track: transparent;
+
+    /* Code block */
+    --code-background: 216 65% 7%; /* #06101E */
+
+    /* Diff */
+    --diff-removed-bg: rgba(248, 81, 73, 0.1);
+    --diff-added-bg: rgba(63, 185, 80, 0.1);
+    --diff-removed-indicator: rgba(248, 81, 73, 0.5);
+    --diff-added-indicator: rgba(63, 185, 80, 0.5);
+
+    /* Sidebar */
+    --sidebar-bg: 216 65% 7%; /* #060F1E */
+  }
+
+  /* ── Light theme ── Pale frost ── */
+  .light {
+    color-scheme: light;
+    --background: 216 40% 97%; /* #F3F6FA */
+    --foreground: 216 55% 13%; /* #0F1E33 */
+    --card: 216 35% 95%; /* #EDF1F6 */
+    --card-foreground: 216 55% 13%;
+    --popover: 216 35% 95%;
+    --popover-foreground: 216 55% 13%;
+    --primary: 216 55% 13%;
+    --primary-foreground: 216 40% 97%;
+    --secondary: 216 30% 92%; /* #E2E8F0 */
+    --secondary-foreground: 216 40% 20%;
+    --muted: 216 28% 93%; /* #E6EBF2 */
+    --muted-foreground: 210 15% 48%; /* #697D8F */
+    --accent: 204 60% 40%; /* #297AB0 — deeper blue for contrast */
+    --accent-foreground: 216 40% 97%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 216 25% 86%; /* #CDD6E1 */
+    --input: 216 25% 86%;
+    --ring: 204 60% 40%;
+    --radius: 0.5rem;
+
+    /* Code block */
+    --code-background: 220 14% 94%;
+
+    /* Diff */
+    --diff-removed-bg: rgba(255, 99, 71, 0.08);
+    --diff-added-bg: rgba(46, 160, 67, 0.08);
+    --diff-removed-indicator: rgba(208, 58, 40, 0.55);
+    --diff-added-indicator: rgba(36, 134, 54, 0.55);
+
+    /* Sidebar */
+    --sidebar-bg: 216 35% 95%;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "ss02", "cv01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: none;
+  }
+  .light body {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
+  }
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/40;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@media (pointer: coarse) {
+  .scrollbar-subtle {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .session-row-inactive:hover {
+    @apply bg-secondary/20 text-foreground;
+  }
+
+  .group .session-delete-button {
+    opacity: 0;
+  }
+
+  .group:hover .session-delete-button {
+    opacity: 1;
+  }
+
+  .session-delete-icon:hover {
+    @apply text-destructive;
+  }
+}
+
+/* ── Prose / Markdown ── */
+.prose {
+  @apply text-foreground max-w-none;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  @apply text-foreground font-semibold tracking-tight;
+}
+.prose h1 {
+  @apply text-xl mt-8 mb-4;
+}
+.prose h2 {
+  @apply text-lg mt-6 mb-3;
+}
+.prose h3 {
+  @apply text-base mt-5 mb-2;
+}
+.prose p {
+  @apply leading-relaxed [&:not(:first-child)]:mt-3;
+  overflow-wrap: anywhere;
+}
+.prose blockquote {
+  @apply mt-4 border-l-2 border-accent/40 pl-4 italic text-muted-foreground;
+  overflow-wrap: anywhere;
+}
+.prose ul {
+  @apply my-3 ml-4 list-disc [&>li]:mt-1;
+}
+.prose ol {
+  @apply my-3 ml-4 list-decimal [&>li]:mt-1;
+}
+.prose li {
+  @apply leading-relaxed;
+  overflow-wrap: anywhere;
+}
+.prose pre {
+  @apply my-4 overflow-x-auto rounded-lg bg-code;
+}
+.prose pre code {
+  @apply rounded-none bg-transparent p-0 font-mono text-[13px] font-normal leading-relaxed text-foreground;
+}
+.prose .katex {
+  font-size: 1.05em;
+}
+.prose .katex-display {
+  @apply my-4 overflow-x-auto overflow-y-hidden py-1;
+}
+
+.prose a {
+  @apply text-accent underline underline-offset-2 decoration-accent/40 hover:decoration-accent transition-colors;
+  overflow-wrap: anywhere;
+}
+.prose strong {
+  @apply font-semibold text-foreground;
+}
+.prose hr {
+  @apply my-6 border-border;
+}
+
+/* Tables */
+.prose table {
+  @apply w-full min-w-max text-sm border-collapse;
+}
+.prose thead {
+  @apply border-b border-border;
+}
+.prose th {
+  @apply px-3 py-2 text-left font-semibold text-foreground text-xs uppercase tracking-wider;
+  overflow-wrap: anywhere;
+}
+.prose td {
+  @apply px-3 py-2 border-b border-border/30 text-foreground/80;
+  overflow-wrap: anywhere;
+}
+.prose tbody tr:hover {
+  @apply bg-muted/20;
+}
+
+/* Task lists (GFM checkboxes) */
+.prose ul:has(> li > input[type="checkbox"]) {
+  @apply list-none ml-0;
+}
+.prose li > input[type="checkbox"] {
+  @apply mr-2 accent-accent;
+}
+
+/* Strikethrough */
+.prose del {
+  @apply text-muted-foreground line-through;
+}
+
+/* ── Shiki dual-theme (defaultColor: false) ── */
+.shiki,
+.shiki span {
+  color: var(--shiki-dark);
+  background-color: transparent;
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+  text-decoration: var(--shiki-dark-text-decoration);
+}
+.light .shiki,
+.light .shiki span {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+  text-decoration: var(--shiki-light-text-decoration);
+}
+.shiki-wrapper pre.shiki {
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+/* ── Diff backgrounds ── */
+.diff-line-removed {
+  background-color: var(--diff-removed-bg);
+}
+.diff-line-added {
+  background-color: var(--diff-added-bg);
+}
+.diff-gutter-removed {
+  color: var(--diff-removed-indicator);
+}
+.diff-gutter-added {
+  color: var(--diff-added-indicator);
+}
+
+/* ── Animations ── */
+@keyframes cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sheet-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes dialog-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes dialog-exit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes breathing {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+@keyframes progress-line {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out both;
+}
+.animate-progress-line {
+  animation: progress-line 1.5s ease-in-out infinite;
+}
+.animate-breathing {
+  animation: breathing 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win the cascade */
+    animation-duration: 0ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win the cascade */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win the cascade */
+    animation-delay: 0ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win the cascade */
+    transition-duration: 0ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win the cascade */
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Gradient mask for chat scroll fade ── */
+.scroll-fade-top {
+  mask-image: linear-gradient(to bottom, transparent, black 48px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 48px);
+}
