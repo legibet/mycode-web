@@ -1,0 +1,9 @@
+# Node.js / Frontend
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.npm
+.DS_Store
