@@ -1,132 +1,157 @@
-# mycode-web — Agent Context
+# mycode-web Wails Branch — Agent Context
 
-Shared React + Vite UI for the [`mycode`](https://github.com/legibet/mycode) (Python) and
-[`mycode-go`](https://github.com/legibet/mycode-go) (Go) backends, which consume this repo as the
-`web/` git submodule. The UI is backend-agnostic: it talks to whichever backend over the HTTP/SSE
-API contract (defined by the backend — see its `docs/api.md`).
+This branch is the Wails-native UI for `mycode-go-wails`.
+
+The UI is not backend-agnostic on this branch. It runs inside Wails, calls Go
+bindings through `window.go.main.App`, and receives live run updates through
+Wails runtime events.
 
 ## Dev
 
 ```bash
 pnpm install
-pnpm dev          # Vite dev server on :5173, proxies /api to a backend on :8000
-pnpm check        # Biome lint + format
-pnpm typecheck    # tsc --noEmit
-pnpm test:run     # Vitest
-pnpm build        # production build -> dist/
+pnpm dev
+pnpm check
+pnpm typecheck
+pnpm test:run
+pnpm build
 ```
 
-Run a backend (`mycode web --dev` or `mycode-go web --dev`) alongside for a full stack.
+For the full desktop app, run `make wails-dev` from the parent repository.
 
 ## Component Structure
 
 ```text
-web/src/
-  App.tsx                # root layout, config loading, session init
+src/
+  App.tsx                # root layout, config loading, Wails menu commands
   main.tsx               # React entry
   types.ts               # shared TypeScript types
-  index.css              # Tailwind CSS
+  index.css              # Tailwind CSS and Wails chrome rules
   components/
     Chat/
       MessageList.tsx      # scrollable message history
       MessageBubble.tsx    # single message, role-based styling
       CompactMarker.tsx    # inline divider rendered for `compact` markers
-      InputArea.tsx        # user input, image attachment, submit
+      InputArea.tsx        # user input, native file attach/drop, submit
       ToolCard.tsx         # tool execution block (start/output/done)
-      ReasoningBlock.tsx   # thinking block — expanded while streaming, collapses after
+      ReasoningBlock.tsx   # thinking block
       MarkdownBlock.tsx    # markdown rendering
       CodeBlock.tsx        # syntax-highlighted code
       HighlightedCode.tsx  # shared highlighting wrapper
       EditDiff.tsx         # diff view for edit tool results
     Layout.tsx             # main layout shell
-    Sidebar.tsx            # session list + settings panel
-    WorkspacePicker.tsx    # workspace browser using /api/workspaces
+    Sidebar.tsx            # session list + workspace picker trigger
+    WorkspacePicker.tsx    # workspace browser through Wails bindings
     MobileHeader.tsx       # mobile nav header
-    ThemeProvider.tsx       # light/dark theme toggle
+    ThemeProvider.tsx      # light/dark theme toggle
     UI/                    # shared UI primitives
   hooks/
-    useChat.ts             # main chat state + SSE streaming
+    useChat.ts             # chat state + Wails run events
     sessionSelection.ts    # session picker state
     *.test.ts(x)           # focused unit and hook tests
   test/
     setup.ts               # Vitest + Testing Library setup
   utils/
+    wails.ts               # Wails binding/runtime wrapper
     messages.ts            # block helpers + buildRenderMessages() projection
-    highlighter.ts         # code syntax highlighting (shiki)
+    highlighter.ts         # code syntax highlighting
     storage.ts             # localStorage helpers
-    config.ts              # reasoning effort defaults + provider normalization with remote config
+    config.ts              # provider normalization with remote config
     clipboard.ts           # clipboard copy helper
-    cn.ts                  # CSS class merging (clsx + tailwind-merge)
+    cn.ts                  # CSS class merging
 ```
+
+## Wails Contract
+
+Go binding methods are exposed as `window.go.main.App`:
+
+- `GetConfig(cwd)`
+- `Settings()`
+- `UpdateSettings({config})`
+- `ListSessions(cwd)`
+- `LoadSession(sessionId)`
+- `DeleteSession(sessionId)`
+- `ClearSession(sessionId)`
+- `StartChat(request)`
+- `CancelRun(runId)`
+- `DecideRun(runId, {request_id, decision})`
+- `SelectFiles(title, pattern, multiple)`
+- `ReadFiles(paths)`
+- `WorkspaceRoots()`
+- `BrowseWorkspace(root, path)`
+
+Each method returns `{ok, status, data, detail}`. Errors preserve the same
+status/detail shape as the Go service layer so active-run conflicts and
+validation errors stay visible to the UI.
+
+Runtime events:
+
+- `mycode:run_event` carries `{run_id, session_id, event}`
+- `mycode:desktop_command` carries `new_chat`, `select_workspace`, or
+  `open_settings`
+
+`mycode:run_event.event` uses the same stream event payloads as the core run
+manager. The desktop-only `done` event ends the live subscription after the Go
+run finishes.
 
 ## Message State Model
 
-`useChat.ts` keeps two pieces of reducer state:
+`useChat.ts` keeps two reducer fields:
 
-- `rawMessages: ChatMessage[]` — canonical block messages (mirrors the JSONL timeline; includes `role: "compact"` markers)
-- `toolRuntimeById` — ephemeral tool runtime state (streaming output, pending flags, final result)
+- `rawMessages: ChatMessage[]` mirrors the persisted message timeline
+- `toolRuntimeById` keeps live tool output, pending flags, and final results
 
-The render-ready list `messages: RenderMessage[]` (where `RenderMessage = ChatMessage | CompactMarkerMessage`) is derived via `useMemo(buildRenderMessages(rawMessages, toolRuntimeById))`. There is no second copy of state to keep in sync — every reducer transition produces a new `rawMessages` and/or `toolRuntimeById` reference and the projection is recomputed.
+`messages: RenderMessage[]` is derived with
+`buildRenderMessages(rawMessages, toolRuntimeById)`. There is no second copy of
+message state to keep in sync.
 
-`CompactMarkerMessage` (`{kind: "compact-marker", sourceIndex, renderKey}`) carries no content of its own — it just tells `MessageList` to render `CompactMarker` instead of `MessageBubble`. Use the `isCompactMarker(msg)` type guard from `types.ts` to narrow when iterating.
+Reducer actions:
 
-State is managed via `useReducer` with actions:
-
-- `set_messages` — load session history from server
-- `start_turn` — optimistic user message + empty assistant
-- `rewind_and_start_turn` — rewind + optimistic new turn
-- `apply_event` — apply one SSE event to `rawMessages` / `toolRuntimeById`
-- `rollback` — restore the snapshot taken before an optimistic turn
-
-`buildRenderMessages()` in `utils/messages.ts` is the single projection used by both initial load and live streaming: tool results visually attach to their `tool_use`, multiple assistant turns of a tool loop merge into one bubble, and every `role: "compact"` entry surfaces as a `CompactMarkerMessage`. A live `compact` SSE event appends a `{role: "compact"}` entry to `rawMessages`; the marker appears on the next render.
-
-Key design decisions:
-
-- Tool results persisted as `user` messages with `tool_result` blocks are visually folded into the preceding assistant message during rendering
-- Each render message and block gets a stable `renderKey` for React reconciliation
-- `sourceIndex` tracks the original message position; rewind uses this index against the visible list, so rewinding to a real user message before a `compact` marker slices the marker away too
+- `set_messages` loads session history and replays pending run events
+- `start_turn` adds the optimistic user message and empty assistant
+- `rewind_and_start_turn` rewinds visible history and starts a new turn
+- `apply_event` applies one run event
+- `rollback` restores the pre-turn snapshot after a failed start
 
 Rendering rules:
 
-- `thinking` blocks → `ReasoningBlock` (expanded while streaming, uses `meta.duration_ms` when present)
-- `tool_use` blocks → `ToolCard` (with matching `tool_result` and live runtime folded in)
-- `text` blocks → `MarkdownBlock`
-- `image` blocks → inline image preview in `MessageBubble`
-- `compact-marker` entries → `CompactMarker` (a thin labelled divider, no interactivity)
+- `thinking` blocks render as `ReasoningBlock`
+- `tool_use` blocks render as `ToolCard`
+- `text` blocks render as `MarkdownBlock`
+- `image` blocks render inline previews
+- `compact` messages render as `CompactMarker`
 
-`MessageList` renders long histories as a tail window: initial session load renders the latest messages and scrolls to the bottom before paint. Scrolling near the top prepends older messages in batches and preserves the current viewport by restoring the previous distance from the bottom. Auto-scroll follows incoming message updates only while the user is already near the bottom; local height changes such as expanding tools do not trigger it.
+## Run Flow
 
-## Streaming
+1. `StartChat(request)` returns `{run, session}`.
+2. `useChat` subscribes to `mycode:run_event`.
+3. Matching run events are dispatched into the reducer.
+4. `permission_request` opens the approval prompt.
+5. `permission_resolved` clears the prompt.
+6. `done` stops loading and refreshes the session list.
+7. A 409 active-run error attaches to the existing run.
 
-1. `POST /api/chat` → get `{run, session}`
-2. `GET /api/runs/{run_id}/stream` → SSE reader
-3. Each `data:` line parsed as `StreamEvent`, dispatched to reducer
-4. `data: [DONE]` ends the stream
-5. On disconnect: attempt session reload recovery via `GET /api/sessions/{id}`
-6. 409 conflict: attach to the existing run's stream
+`streamTokenRef`, `pendingRequestTokenRef`, and `activeRunRef` invalidate stale
+subscriptions, deduplicate concurrent sends, and keep cancel/decision actions
+pointed at the current run.
 
-A live `compact` SSE event is consumed by the reducer at the position it arrives — the marker lands between whatever just streamed and whatever streams next, mirroring where the agent emitted it (e.g. between two tool calls of the same turn). The server has already persisted the `compact` JSONL record at the same point, so a later session reload renders the same marker without any extra round-trip.
+## Attachments
 
-`permission_request` opens the approval prompt. `permission_resolved` clears it. `deny` cancels the active run.
+The attachment button uses the Wails file dialog. Native file drops use Wails
+file-drop paths and then call `ReadFiles(paths)` so the existing attachment
+processing still handles text, image, and PDF payloads in one place.
 
-Streaming state tracking:
-
-- `streamTokenRef` — incremented to invalidate stale streams
-- `pendingRequestTokenRef` — deduplicates concurrent send requests
-- `activeRunRef` — tracks the current run for cancel
-
-Attachments:
-
-- `InputArea` always shows the attachment button and supports file picker and drag-and-drop
-- UTF-8 text/code/config files are attached as the same text snapshot format used by CLI `@file`
-- Images and PDFs are sent as structured `input` blocks
-- The attachment button uses `image_input_models` and `pdf_input_models`; unsupported pending attachments are cleared on model switch
+Unsupported image/PDF attachments are cleared when the active model changes.
 
 ## Config Persistence
 
-Web UI config is persisted to `localStorage`:
+Local UI config is stored in `localStorage`:
 
-- `provider`, `model`, `cwd`, `reasoningEffort`
-- `auto` and empty string both mean "do not send reasoning_effort to server"
-- The reasoning effort selector in the sidebar only renders when `supports_reasoning_effort` is true AND the current model appears in `reasoning_models` (from `GET /api/config`)
-- Settings editor options come from `provider_type_env_vars` and `provider_type_default_models`
+- `provider`
+- `model`
+- `cwd`
+- `reasoningEffort`
+
+`auto` and an empty reasoning effort both mean the request does not send
+`reasoning_effort`. The reasoning effort selector only renders when the remote
+config says the current provider/model supports it.

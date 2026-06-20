@@ -1,34 +1,35 @@
 # mycode-web
 
-Shared React + Vite UI for [mycode](https://github.com/legibet/mycode) (Python backend)
-and [mycode-go](https://github.com/legibet/mycode-go) (Go backend). Both backends consume
-this repository as a git submodule at `web/` and build it into their served/embedded assets.
+This branch is the Wails-native UI for `mycode-go-wails`.
 
-The UI talks to the backend purely over the HTTP/SSE API contract, so it is backend-agnostic.
+It is consumed by `mycode-go` as the `web/` git submodule on the
+`mycode-go-wails` branch. The UI calls Wails Go bindings through
+`window.go.main.App` and receives live run events from the Wails runtime.
 
 ## Develop
 
+Run the desktop app from the parent repository:
+
+```bash
+make wails-dev
+```
+
+Useful UI-only commands:
+
 ```bash
 pnpm install
-pnpm dev          # Vite dev server on :5173, proxies /api to a running backend on :8000
+pnpm dev
+pnpm check
+pnpm typecheck
+pnpm test:run
+pnpm build
 ```
 
-Run a backend (`mycode web --dev` or `mycode-go web --dev`) alongside for a full stack.
+## Submodule Update
 
-## Commands
-
-```bash
-pnpm check        # Biome lint + format check
-pnpm typecheck    # tsc --noEmit
-pnpm test:run     # Vitest
-pnpm build        # production build -> dist/
-```
-
-## Consumed as a submodule
-
-Backends pin this repo at a specific commit. To update the UI in a backend repo:
+After committing UI changes in this repository, update the parent repo pointer:
 
 ```bash
-cd web && git checkout <commit> && cd ..
-git add web && git commit -m "chore(web): bump mycode-web"
+git add web
+git commit -m "chore(web): bump Wails UI"
 ```

@@ -4,12 +4,12 @@
 
 import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import {
-  type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
   memo,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -21,6 +21,7 @@ import type {
 } from "../../types";
 import { cn } from "../../utils/cn";
 import { randomId } from "../../utils/id";
+import { onNativeFileDrop, readFiles, selectFiles } from "../../utils/wails";
 import { EffortTrigger, ModelTrigger } from "./InputPills";
 
 // File pickers only understand MIME types and extensions, so keep the text
@@ -198,7 +199,7 @@ export const InputArea = memo(function InputArea({
   disabled: disabledProp = false,
 }: InputAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dropZoneRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounterRef = useRef(0);
 
@@ -234,10 +235,28 @@ export const InputArea = memo(function InputArea({
     [disabled, onAttachFiles, supportsDocuments, supportsImages],
   );
 
-  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    await attachFiles(files);
+  useEffect(() => {
+    return onNativeFileDrop((x, y, paths) => {
+      const rect = dropZoneRef.current?.getBoundingClientRect();
+      if (
+        !rect ||
+        x < rect.left ||
+        x > rect.right ||
+        y < rect.top ||
+        y > rect.bottom
+      ) {
+        return;
+      }
+
+      void (async () => {
+        await attachFiles(await readFiles(paths));
+      })();
+    });
+  }, [attachFiles]);
+
+  const handlePickFiles = async () => {
+    if (loading || disabled) return;
+    await attachFiles(await selectFiles(accept, true));
   };
 
   const handlePaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -286,6 +305,7 @@ export const InputArea = memo(function InputArea({
     <div className="mx-auto max-w-4xl max-md:max-w-none px-5 max-md:px-3 max-md:pb-2">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop drop target */}
       <div
+        ref={dropZoneRef}
         role="presentation"
         className={cn(
           "relative rounded-lg bg-card border shadow-sm transition-[border-color,background-color,box-shadow] duration-200",
@@ -337,16 +357,6 @@ export const InputArea = memo(function InputArea({
           </div>
         )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={accept}
-          multiple
-          aria-label="Attach files"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-
         <textarea
           ref={textareaRef}
           rows={1}
@@ -374,7 +384,7 @@ export const InputArea = memo(function InputArea({
             type="button"
             aria-label="Attach file"
             disabled={loading || disabled}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => void handlePickFiles()}
             className={cn(
               "size-7 flex items-center justify-center rounded-md transition-colors shrink-0",
               loading || disabled
