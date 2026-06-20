@@ -4,7 +4,13 @@
  * Mobile: sidebar as overlay, top header bar.
  */
 
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -41,21 +47,7 @@ import {
   saveHistory,
   saveSidebarWidth,
 } from "./utils/storage";
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    let message = `Request failed with status ${response.status}`;
-    try {
-      const data = await response.json();
-      if (typeof data?.detail === "string" && data.detail) {
-        message = data.detail;
-      }
-    } catch {}
-    throw new Error(message);
-  }
-  return response.json() as Promise<T>;
-}
+import { installDesktopChrome, setWindowTitle, wailsAPI } from "./utils/wails";
 
 function modelSupports(
   remoteConfig: RemoteConfig | null,
@@ -97,6 +89,7 @@ function AppContent() {
   // User's preferred sidebar width — only changes on explicit drag/reset.
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspaceOpenRequest, setWorkspaceOpenRequest] = useState(0);
   const maxSidebarWidth = useSyncExternalStore(
     subscribeToWindowResize,
     getMaxSidebarWidth,
@@ -125,22 +118,22 @@ function AppContent() {
     SIDEBAR_MIN_WIDTH,
     Math.min(maxSidebarWidth, sidebarWidth),
   );
-  const configUrl = `/api/config?cwd=${encodeURIComponent(localConfig.cwd)}`;
   const {
     data: remoteConfig = null,
     error: remoteConfigError,
     mutate: mutateRemoteConfig,
-  } = useSWR<RemoteConfig, Error>(configUrl, fetchJson<RemoteConfig>, {
-    keepPreviousData: true,
-  });
+  } = useSWR<RemoteConfig, Error>(
+    ["config", localConfig.cwd],
+    () => wailsAPI.getConfig(localConfig.cwd),
+    {
+      keepPreviousData: true,
+    },
+  );
   const {
     data: settingsResponse = null,
     error: settingsError,
     mutate: mutateSettings,
-  } = useSWR<SettingsResponse, Error>(
-    "/api/settings",
-    fetchJson<SettingsResponse>,
-  );
+  } = useSWR<SettingsResponse, Error>("settings", () => wailsAPI.settings());
 
   const config = useMemo(
     () =>
@@ -271,6 +264,27 @@ function AppContent() {
     clearAttachments();
   }, [createSession, clearAttachments]);
 
+  useEffect(() => installDesktopChrome(), []);
+
+  useEffect(() => {
+    return wailsAPI.onDesktopCommand((command) => {
+      if (command === "new_chat") {
+        handleCreateSession();
+      } else if (command === "select_workspace") {
+        setSidebarOpen(true);
+        setWorkspaceOpenRequest((value) => value + 1);
+      } else if (command === "open_settings") {
+        setSettingsOpen(true);
+      }
+    });
+  }, [handleCreateSession]);
+
+  useEffect(() => {
+    setWindowTitle(
+      activeSession?.title ? `mycode - ${activeSession.title}` : "mycode",
+    );
+  }, [activeSession?.title]);
+
   const handleDeleteSession = useCallback(
     async (id: string) => {
       const isActive = activeSession?.id === id;
@@ -316,6 +330,7 @@ function AppContent() {
               onRemoveHistory={handleRemoveHistory}
               onOpenSettings={handleOpenSettings}
               workspaceMissing={workspaceMissing}
+              workspaceOpenRequest={workspaceOpenRequest}
               width={displayedSidebarWidth}
               onResize={handleResizeSidebar}
               onResizeReset={handleResetSidebarWidth}
@@ -343,6 +358,7 @@ function AppContent() {
                 onRemoveHistory={handleRemoveHistory}
                 onOpenSettings={handleOpenSettings}
                 workspaceMissing={workspaceMissing}
+                workspaceOpenRequest={workspaceOpenRequest}
                 width={260}
                 className="h-full"
               />
@@ -419,6 +435,7 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
+      <div className="wails-window-drag-region" aria-hidden="true" />
       <AppContent />
     </ThemeProvider>
   );

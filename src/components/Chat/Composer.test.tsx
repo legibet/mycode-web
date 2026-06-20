@@ -7,21 +7,27 @@ import { Composer, type ComposerHandle } from "./Composer";
 describe("Composer", () => {
   it("submits a selected workspace file and keeps it when rejected", async () => {
     const user = userEvent.setup();
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          entries: [
-            {
-              name: "main.ts",
-              path: "src/main.ts",
-              kind: "text",
+    window.go = {
+      main: {
+        App: {
+          WorkspaceFiles: vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            data: {
+              entries: [
+                {
+                  name: "main.ts",
+                  path: "src/main.ts",
+                  kind: "text",
+                },
+              ],
+              truncated: false,
+              error: "",
             },
-          ],
-          truncated: false,
-          error: "",
-        }),
-      ),
-    );
+          }),
+        } as never,
+      },
+    };
     const composerRef = createRef<ComposerHandle>();
     let resolveSubmission: ((accepted: boolean) => void) | undefined;
     const onSubmit = vi.fn(

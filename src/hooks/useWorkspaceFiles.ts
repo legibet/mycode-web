@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { WorkspaceFilesResponse } from "../utils/completion";
+import { APIError, wailsAPI } from "../utils/wails";
 
 interface WorkspaceFilesState {
   entries: WorkspaceFilesResponse["entries"];
@@ -43,14 +44,20 @@ export function useWorkspaceFiles(
     }
 
     setState((prev) => ({ ...prev, loading: true }));
-    const controller = new AbortController();
+    let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ cwd, dir, prefix });
-        const res = await fetch(`/api/workspaces/files?${params}`, {
-          signal: controller.signal,
+        const data = await wailsAPI.workspaceFiles(cwd, dir, prefix);
+        if (cancelled) return;
+        setState({
+          entries: data.error ? EMPTY : data.entries,
+          loading: false,
+          truncated: data.truncated,
+          unsupported: false,
         });
-        if (res.status === 404) {
+      } catch (e) {
+        if (cancelled) return;
+        if (e instanceof APIError && e.status === 404) {
           unsupportedCwds.current.add(cwd);
           setState({
             entries: EMPTY,
@@ -60,16 +67,6 @@ export function useWorkspaceFiles(
           });
           return;
         }
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const data = (await res.json()) as WorkspaceFilesResponse;
-        setState({
-          entries: data.error ? EMPTY : data.entries,
-          loading: false,
-          truncated: data.truncated,
-          unsupported: false,
-        });
-      } catch (e) {
-        if (controller.signal.aborted) return;
         console.error("Failed to list workspace files:", e);
         setState({
           entries: EMPTY,
@@ -81,8 +78,8 @@ export function useWorkspaceFiles(
     }, 120);
 
     return () => {
+      cancelled = true;
       clearTimeout(timer);
-      controller.abort();
     };
   }, [cwd, dir, prefix, enabled]);
 

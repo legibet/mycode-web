@@ -5,7 +5,24 @@ import { InputArea } from "./InputArea";
 
 describe("InputArea", () => {
   it("rejects new unsupported media and keeps existing uploads while blocking submission", async () => {
-    const user = userEvent.setup({ applyAccept: false });
+    const user = userEvent.setup();
+    window.go = {
+      main: {
+        App: {
+          SelectFiles: vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            data: [
+              {
+                name: "new.png",
+                data: "aW1hZ2U=",
+                mime_type: "image/png",
+              },
+            ],
+          }),
+        } as never,
+      },
+    };
     const onSubmit = vi.fn().mockResolvedValue(true);
     const onAttachFiles = vi.fn();
     const image = {
@@ -36,10 +53,7 @@ describe("InputArea", () => {
       />,
     );
 
-    await user.upload(
-      screen.getByLabelText("Attach files"),
-      new File(["image"], "new.png", { type: "image/png" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Attach file" }));
 
     expect(onAttachFiles).not.toHaveBeenCalled();
     expect(screen.getByText("Image unsupported")).toBeInTheDocument();

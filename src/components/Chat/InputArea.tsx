@@ -13,7 +13,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  type ChangeEvent,
   type DragEvent,
   memo,
   useCallback,
@@ -31,6 +30,7 @@ import type {
 import { cn } from "../../utils/cn";
 import type { SlashCommand } from "../../utils/completion";
 import { randomId } from "../../utils/id";
+import { onNativeFileDrop, readFiles, selectFiles } from "../../utils/wails";
 import { Composer, type ComposerHandle } from "./Composer";
 import { EffortTrigger, ModelTrigger } from "./InputPills";
 
@@ -227,8 +227,8 @@ export const InputArea = memo(function InputArea({
   disabled: disabledProp = false,
 }: InputAreaProps) {
   const composerRef = useRef<ComposerHandle | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  const dropZoneRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const [hasContent, setHasContent] = useState(false);
@@ -368,10 +368,28 @@ export const InputArea = memo(function InputArea({
     [attachFiles],
   );
 
-  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const incoming = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    await attachFiles(incoming);
+  useEffect(() => {
+    return onNativeFileDrop((x, y, paths) => {
+      const rect = dropZoneRef.current?.getBoundingClientRect();
+      if (
+        !rect ||
+        x < rect.left ||
+        x > rect.right ||
+        y < rect.top ||
+        y > rect.bottom
+      ) {
+        return;
+      }
+
+      void (async () => {
+        await attachFiles(await readFiles(paths));
+      })();
+    });
+  }, [attachFiles]);
+
+  const handlePickFiles = async () => {
+    if (loading || disabled) return;
+    await attachFiles(await selectFiles(accept, true));
   };
 
   const handleDragEnter = (e: DragEvent) => {
@@ -425,6 +443,7 @@ export const InputArea = memo(function InputArea({
     <div className="mx-auto max-w-4xl max-md:max-w-none px-5 max-md:px-3 max-md:pb-2">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop drop target */}
       <div
+        ref={dropZoneRef}
         role="presentation"
         className={cn(
           "relative rounded-lg bg-card border shadow-sm transition-[border-color,background-color,box-shadow] duration-200",
@@ -479,16 +498,6 @@ export const InputArea = memo(function InputArea({
           </div>
         )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={accept}
-          multiple
-          aria-label="Attach files"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-
         <Composer
           ref={composerRef}
           disabled={disabled}
@@ -511,7 +520,7 @@ export const InputArea = memo(function InputArea({
             type="button"
             aria-label="Attach file"
             disabled={loading || disabled}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => void handlePickFiles()}
             className={cn(
               "size-7 flex items-center justify-center rounded-md transition-colors shrink-0",
               loading || disabled

@@ -15,13 +15,14 @@ import {
 import type {
   AttachedFile,
   ChatErrorResponse,
+  ChatInputBlock,
   ChatMessage,
-  ChatResponse,
-  CompactResponse,
+  ChatRequest,
   ComposerSubmission,
   LocalConfig,
   MessageMeta,
   PermissionRequest,
+  RunEventPayload,
   RunInfo,
   RunKind,
   SessionResponse,
@@ -48,6 +49,7 @@ import {
   removeActiveSession,
   saveActiveSession,
 } from "../utils/storage";
+import { APIError, wailsAPI } from "../utils/wails";
 import {
   isCurrentSendRequest,
   isCurrentWorkspaceRequest,
@@ -87,10 +89,10 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-function getErrorDetail(
-  data: ChatResponse | CompactResponse | ChatErrorResponse,
-): ChatErrorResponse["detail"] {
-  return "detail" in data ? data.detail : undefined;
+function getErrorDetail(error: unknown): ChatErrorResponse["detail"] {
+  return error instanceof APIError
+    ? (error.detail as ChatErrorResponse["detail"])
+    : undefined;
 }
 
 function getRunFromDetail(detail: ChatErrorResponse["detail"]): RunInfo | null {
@@ -98,29 +100,12 @@ function getRunFromDetail(detail: ChatErrorResponse["detail"]): RunInfo | null {
   return typeof detail === "object" && detail?.run ? detail.run : null;
 }
 
-function getMessageFromDetail(
-  detail: ChatErrorResponse["detail"],
-  fallback: string,
-): string {
-  if (typeof detail === "string" && detail) return detail;
-  if (Array.isArray(detail)) {
-    const firstMessage = detail.find((item) => item.msg)?.msg;
-    return firstMessage || fallback;
-  }
-  if (detail && typeof detail === "object" && detail.message) {
-    return detail.message;
-  }
-  return fallback;
-}
-
 function createDraftSession(): SessionSummary {
   return { id: randomId(), title: DEFAULT_SESSION_TITLE, isDraft: true };
 }
 
 /** Map a pending upload attachment to a /api/chat input block. */
-function attachmentToInputBlock(
-  attachment: AttachedFile,
-): Record<string, unknown> {
+function attachmentToInputBlock(attachment: AttachedFile): ChatInputBlock {
   if (attachment.kind === "text") {
     return {
       type: "text",
@@ -138,9 +123,7 @@ function attachmentToInputBlock(
 }
 
 /** Map an inline @ workspace reference to a /api/chat path input block. */
-function workspaceRefToInputBlock(
-  ref: WorkspaceFileReference,
-): Record<string, unknown> {
+function workspaceRefToInputBlock(ref: WorkspaceFileReference): ChatInputBlock {
   if (ref.kind === "text") {
     // Server reads the file into the same <file> snapshot as CLI @file;
     // the path doubles as the display name.
@@ -384,7 +367,7 @@ export function useChat(config: LocalConfig) {
   const requestTokenRef = useRef(0);
   const pendingRequestTokenRef = useRef(0);
   const sessionRequestTokenRef = useRef(0);
-  const streamAbortRef = useRef<AbortController | null>(null);
+  const streamStopRef = useRef<(() => void) | null>(null);
   const streamTokenRef = useRef(0);
   const activeRunRef = useRef<RunInfo | null>(null);
   const loadSessionRef = useRef<
@@ -404,9 +387,7 @@ export function useChat(config: LocalConfig) {
     if (!runId) return;
 
     try {
-      await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
-        method: "POST",
-      });
+      await wailsAPI.cancelRun(runId);
     } catch (e) {
       console.error("Failed to cancel:", e);
     }
@@ -417,11 +398,7 @@ export function useChat(config: LocalConfig) {
     if (requestCwd !== cwdRef.current) return [];
 
     try {
-      const res = await fetch(
-        `/api/sessions?cwd=${encodeURIComponent(requestCwd)}`,
-      );
-      if (!res.ok) throw new Error("Failed to load sessions");
-      const data = (await res.json()) as SessionsResponse;
+      const data: SessionsResponse = await wailsAPI.listSessions(requestCwd);
       if (requestCwd !== cwdRef.current) {
         return [];
       }
@@ -452,167 +429,88 @@ export function useChat(config: LocalConfig) {
   const stopStreaming = useCallback(() => {
     streamTokenRef.current += 1;
     pendingRequestTokenRef.current = 0;
-    streamAbortRef.current?.abort();
-    streamAbortRef.current = null;
+    streamStopRef.current?.();
+    streamStopRef.current = null;
     activeRunRef.current = null;
     setRunKind(null);
     setCompactError(null);
     setPendingPermissions([]);
   }, []);
 
+  const applyRunEvent = useCallback((event: StreamEvent) => {
+    if (event.type === "permission_request") {
+      const next: PermissionRequest = {
+        request_id: event.request_id,
+        tool_use_id: event.tool_use_id,
+        tool_name: event.tool_name,
+        preview: event.preview,
+      };
+      setPendingPermissions((prev) =>
+        prev.some((p) => p.request_id === next.request_id)
+          ? prev
+          : [...prev, next],
+      );
+      return;
+    }
+    if (event.type === "permission_resolved") {
+      setPendingPermissions((prev) =>
+        prev.filter((p) => p.request_id !== event.request_id),
+      );
+      return;
+    }
+    dispatch({ type: "apply_event", event });
+  }, []);
+
   const streamRun = useCallback(
-    async (run: RunInfo, sessionId: string, after = 0): Promise<void> => {
+    (run: RunInfo, sessionId: string, after = 0): void => {
       const runId = run?.id;
       if (!runId) return;
 
       streamTokenRef.current += 1;
       const token = streamTokenRef.current;
-      streamAbortRef.current?.abort();
+      streamStopRef.current?.();
 
-      const controller = new AbortController();
-      streamAbortRef.current = controller;
       activeRunRef.current = run;
       const kind = run.kind;
       setRunKind(kind);
 
-      const recoverSession = async () => {
+      const off = wailsAPI.onRunEvent((payload: RunEventPayload) => {
         if (
           streamTokenRef.current !== token ||
-          activeSessionRef.current.id !== sessionId
+          activeSessionRef.current.id !== sessionId ||
+          payload.run_id !== runId ||
+          payload.session_id !== sessionId
         ) {
-          return true;
+          return;
         }
 
-        const reload = loadSessionRef.current;
-        if (!reload) {
-          return false;
-        }
-
-        try {
-          await reload(sessionId);
-          return true;
-        } catch (error) {
-          console.error("Failed to recover disconnected stream:", error);
-          return false;
-        }
-      };
-
-      try {
-        const res = await fetch(
-          `/api/runs/${encodeURIComponent(runId)}/stream?after=${after}`,
-          { signal: controller.signal },
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        if (!res.body) throw new Error("Response body is empty");
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let sawDone = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6);
-            if (data === "[DONE]") {
-              sawDone = true;
-              continue;
-            }
-
-            try {
-              const event = JSON.parse(data) as StreamEvent;
-              if (
-                streamTokenRef.current !== token ||
-                activeSessionRef.current.id !== sessionId
-              ) {
-                continue;
-              }
-              if (event.type === "permission_request") {
-                const next: PermissionRequest = {
-                  request_id: event.request_id,
-                  tool_use_id: event.tool_use_id,
-                  tool_name: event.tool_name,
-                  preview: event.preview,
-                };
-                setPendingPermissions((prev) =>
-                  prev.some((p) => p.request_id === next.request_id)
-                    ? prev
-                    : [...prev, next],
-                );
-                continue;
-              }
-              if (event.type === "permission_resolved") {
-                const requestId = event.request_id;
-                setPendingPermissions((prev) =>
-                  prev.filter((p) => p.request_id !== requestId),
-                );
-                continue;
-              }
-              if (kind === "compact") {
-                // A compact run only ever yields the marker or a failure;
-                // history must stay untouched either way.
-                if (event.type === "compact") {
-                  dispatch({ type: "apply_event", event });
-                } else if (event.type === "error") {
-                  console.error("Compaction failed:", event.message);
-                  setCompactError(event.message || "Compaction failed");
-                }
-                continue;
-              }
-              dispatch({ type: "apply_event", event });
-            } catch (e) {
-              console.error("Parse error:", e);
-            }
-          }
-        }
-
-        if (!sawDone) {
-          const recovered = await recoverSession();
-          if (recovered) {
-            return;
-          }
-        }
-      } catch (e) {
-        if (!(e instanceof Error) || e.name !== "AbortError") {
-          const recovered = await recoverSession();
-          if (
-            !recovered &&
-            streamTokenRef.current === token &&
-            activeSessionRef.current.id === sessionId
-          ) {
-            const message =
-              "Stream disconnected. Reload the session to resume.";
-            if (kind === "compact") {
-              setCompactError(message);
-            } else {
-              dispatch({
-                type: "apply_event",
-                event: { type: "error", message },
-              });
-            }
-          }
-        }
-      } finally {
-        if (streamTokenRef.current === token) {
-          streamAbortRef.current = null;
+        const event = payload.event;
+        if (event.type === "done") {
+          streamStopRef.current?.();
+          streamStopRef.current = null;
           activeRunRef.current = null;
-
           if (activeSessionRef.current.id === sessionId) {
             setRunKind(null);
           }
-
           fetchSessions();
+          return;
         }
-      }
+
+        if (typeof event.seq === "number" && event.seq <= after) return;
+        if (kind === "compact") {
+          if (event.type === "compact") {
+            dispatch({ type: "apply_event", event });
+          } else if (event.type === "error") {
+            console.error("Compaction failed:", event.message);
+            setCompactError(event.message || "Compaction failed");
+          }
+          return;
+        }
+        applyRunEvent(event);
+      });
+      streamStopRef.current = off;
     },
-    [fetchSessions],
+    [applyRunEvent, fetchSessions],
   );
 
   const loadSession = useCallback(
@@ -633,10 +531,7 @@ export function useChat(config: LocalConfig) {
 
       if (!isStillCurrent()) return null;
 
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-      if (!res.ok) throw new Error("Failed to load session");
-
-      const data = (await res.json()) as SessionResponse;
+      const data = await wailsAPI.loadSession(sessionId);
       if (!isStillCurrent()) return null;
       if (!data.session) return null;
 
@@ -744,12 +639,12 @@ export function useChat(config: LocalConfig) {
       };
 
       // Use structured `input` blocks when any attachment is present.
-      const body =
+      const body: ChatRequest =
         attachments?.length || workspaceFiles.length
           ? {
               ...commonFields,
               input: [
-                ...(content ? [{ type: "text", text: content }] : []),
+                ...(content ? [{ type: "text" as const, text: content }] : []),
                 ...workspaceFiles.map(workspaceRefToInputBlock),
                 ...(attachments ?? []).map(attachmentToInputBlock),
               ],
@@ -757,13 +652,7 @@ export function useChat(config: LocalConfig) {
           : { ...commonFields, message: content };
 
       try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-
-        const data = (await res.json()) as ChatResponse | ChatErrorResponse;
+        const chatData = await wailsAPI.startChat(body);
         const isCurrentRequest = isCurrentSendRequest({
           pendingRequestToken: pendingRequestTokenRef.current,
           requestToken,
@@ -773,27 +662,11 @@ export function useChat(config: LocalConfig) {
           requestCwd,
         });
 
-        if (!res.ok) {
-          const detail = getErrorDetail(data);
-          const existingRun = getRunFromDetail(detail);
-          if (res.status === 409 && existingRun?.id) {
-            if (isCurrentRequest) {
-              pendingRequestTokenRef.current = 0;
-              dispatch({ type: "rollback" });
-              streamRun(existingRun, sessionId, existingRun.last_seq || 0);
-            }
-            return false;
-          }
-          throw new Error(getMessageFromDetail(detail, "Failed to start task"));
-        }
-
         pendingRequestTokenRef.current = 0;
 
         if (!isCurrentRequest) {
           return false;
         }
-
-        const chatData = data as ChatResponse;
 
         // Update active session from backend response (has real title, id, etc.)
         if (chatData.session) {
@@ -808,6 +681,20 @@ export function useChat(config: LocalConfig) {
         streamRun(chatData.run, sessionId, 0);
         return true;
       } catch (e) {
+        const detail = getErrorDetail(e);
+        const existingRun = getRunFromDetail(detail);
+        if (
+          e instanceof APIError &&
+          e.status === 409 &&
+          existingRun?.id &&
+          pendingRequestTokenRef.current === requestToken &&
+          activeSessionRef.current.id === sessionId
+        ) {
+          pendingRequestTokenRef.current = 0;
+          dispatch({ type: "rollback" });
+          streamRun(existingRun, sessionId, existingRun.last_seq || 0);
+          return false;
+        }
         if (
           pendingRequestTokenRef.current === requestToken &&
           activeSessionRef.current.id === sessionId
@@ -850,24 +737,18 @@ export function useChat(config: LocalConfig) {
       setCompactError(null);
 
       try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: sessionId,
-            message: content,
-            rewind_to: rewindTo,
-            provider: config.provider || undefined,
-            model: config.model || undefined,
-            cwd: config.cwd,
-            reasoning_effort:
-              config.reasoningEffort && config.reasoningEffort !== "auto"
-                ? config.reasoningEffort
-                : undefined,
-          }),
+        const chatData = await wailsAPI.startChat({
+          session_id: sessionId,
+          message: content,
+          rewind_to: rewindTo,
+          provider: config.provider || undefined,
+          model: config.model || undefined,
+          cwd: config.cwd,
+          reasoning_effort:
+            config.reasoningEffort && config.reasoningEffort !== "auto"
+              ? config.reasoningEffort
+              : undefined,
         });
-
-        const data = (await res.json()) as ChatResponse | ChatErrorResponse;
         const isCurrentRequest = isCurrentSendRequest({
           pendingRequestToken: pendingRequestTokenRef.current,
           requestToken,
@@ -877,37 +758,9 @@ export function useChat(config: LocalConfig) {
           requestCwd,
         });
 
-        if (!res.ok) {
-          // Restore original messages on failure (rewind was optimistic).
-          if (isCurrentRequest) {
-            pendingRequestTokenRef.current = 0;
-            dispatch({ type: "rollback" });
-
-            // If 409 (active run), attach to the existing run.
-            const detail = getErrorDetail(data);
-            const existingRun = getRunFromDetail(detail);
-            if (res.status === 409 && existingRun?.id) {
-              streamRun(existingRun, sessionId, existingRun.last_seq || 0);
-              return;
-            }
-
-            setRunKind(null);
-            dispatch({
-              type: "apply_event",
-              event: {
-                type: "error",
-                message: getMessageFromDetail(detail, "Failed to start task"),
-              },
-            });
-          }
-          return;
-        }
-
         pendingRequestTokenRef.current = 0;
 
         if (!isCurrentRequest) return;
-
-        const chatData = data as ChatResponse;
 
         if (chatData.session) {
           const session = chatData.session;
@@ -918,6 +771,20 @@ export function useChat(config: LocalConfig) {
         fetchSessions();
         streamRun(chatData.run, sessionId, 0);
       } catch (e) {
+        const detail = getErrorDetail(e);
+        const existingRun = getRunFromDetail(detail);
+        if (
+          e instanceof APIError &&
+          e.status === 409 &&
+          existingRun?.id &&
+          pendingRequestTokenRef.current === requestToken &&
+          activeSessionRef.current.id === sessionId
+        ) {
+          pendingRequestTokenRef.current = 0;
+          dispatch({ type: "rollback" });
+          streamRun(existingRun, sessionId, existingRun.last_seq || 0);
+          return;
+        }
         if (
           pendingRequestTokenRef.current === requestToken &&
           activeSessionRef.current.id === sessionId
@@ -955,37 +822,22 @@ export function useChat(config: LocalConfig) {
     setRunKind("compact");
 
     try {
-      const res = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/compact`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            provider: config.provider || undefined,
-            model: config.model || undefined,
-          }),
-        },
-      );
-
-      const data = (await res.json()) as CompactResponse | ChatErrorResponse;
+      const data = await wailsAPI.compactSession(sessionId, {
+        provider: config.provider || undefined,
+        model: config.model || undefined,
+      });
       if (activeSessionRef.current.id !== sessionId) return false;
 
-      if (!res.ok) {
-        const detail = getErrorDetail(data);
-        const existingRun = getRunFromDetail(detail);
-        if (res.status === 409 && existingRun?.id) {
-          // Another client started a run; attach to it with its own kind.
-          streamRun(existingRun, sessionId, existingRun.last_seq || 0);
-          return false;
-        }
-        throw new Error(getMessageFromDetail(detail, "Compaction failed"));
-      }
-
       fetchSessions();
-      streamRun((data as CompactResponse).run, sessionId, 0);
+      streamRun(data.run, sessionId, 0);
       return true;
     } catch (e) {
       if (activeSessionRef.current.id === sessionId) {
+        const existingRun = getRunFromDetail(getErrorDetail(e));
+        if (e instanceof APIError && e.status === 409 && existingRun?.id) {
+          streamRun(existingRun, sessionId, existingRun.last_seq || 0);
+          return false;
+        }
         console.error("Failed to start compaction:", e);
         setRunKind(null);
         setCompactError(getErrorMessage(e));
@@ -1000,8 +852,8 @@ export function useChat(config: LocalConfig) {
 
     streamTokenRef.current += 1;
     pendingRequestTokenRef.current = 0;
-    streamAbortRef.current?.abort();
-    streamAbortRef.current = null;
+    streamStopRef.current?.();
+    streamStopRef.current = null;
     activeRunRef.current = null;
     setPendingPermissions([]);
 
@@ -1035,20 +887,7 @@ export function useChat(config: LocalConfig) {
       // permission_resolved drives the clear; pre-clearing here would strand
       // the prompt if this POST fails while the server-side wait is still pending.
       try {
-        const res = await fetch(
-          `/api/runs/${encodeURIComponent(runId)}/decide`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              request_id: head.request_id,
-              decision,
-            }),
-          },
-        );
-        if (!res.ok) {
-          console.error(`Decide POST failed: ${res.status}`);
-        }
+        await wailsAPI.decideRun(runId, head.request_id, decision);
       } catch (e) {
         console.error("Failed to send decision:", e);
       }
@@ -1140,13 +979,7 @@ export function useChat(config: LocalConfig) {
 
       setSessionLoading(true);
       try {
-        const res = await fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}`,
-          {
-            method: "DELETE",
-          },
-        );
-        if (!res.ok) throw new Error("Failed to delete session");
+        await wailsAPI.deleteSession(sessionId);
 
         if (!isDeletingActive) {
           setSessions(remainingSessions);
@@ -1203,11 +1036,7 @@ export function useChat(config: LocalConfig) {
     if (session.isDraft) return;
 
     try {
-      const res = await fetch(
-        `/api/sessions/${encodeURIComponent(session.id)}/clear`,
-        { method: "POST" },
-      );
-      if (!res.ok) throw new Error(`Clear failed with status ${res.status}`);
+      await wailsAPI.clearSession(session.id);
     } catch (e) {
       console.error("Failed to clear session:", e);
       return;
@@ -1254,11 +1083,7 @@ export function useChat(config: LocalConfig) {
       try {
         if (!isStillCurrent()) return;
         const preferredSessionId = loadActiveSession(requestCwd);
-        const res = await fetch(
-          `/api/sessions?cwd=${encodeURIComponent(requestCwd)}`,
-        );
-        if (!res.ok) throw new Error("Failed to load sessions");
-        const data = (await res.json()) as SessionsResponse;
+        const data = await wailsAPI.listSessions(requestCwd);
         if (!isStillCurrent()) return;
 
         const savedSessions = data.sessions || [];
