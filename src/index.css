@@ -248,6 +248,36 @@
   content-visibility: hidden;
 }
 
+/* Wails desktop chrome. Keep this outside Tailwind layers so it wins over
+   fixed utility sizing after builds. */
+.wails-window-drag-region {
+  display: none;
+}
+
+html[data-mycode-desktop="wails"] .wails-window-drag-region {
+  --wails-draggable: drag;
+  display: block;
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 28px;
+  z-index: 60;
+}
+
+html[data-mycode-desktop="wails"] button:not(:disabled),
+html[data-mycode-desktop="wails"] [role="button"]:not(:disabled) {
+  cursor: default;
+}
+
+html[data-mycode-desktop="wails"] .sidebar-brand {
+  padding-top: 36px;
+}
+
+html[data-mycode-desktop="wails"] .mobile-header,
+html[data-mycode-desktop="wails"] .fullscreen-panel-header {
+  height: 72px;
+  padding-top: 24px;
+}
+
 /* ── Prose / Markdown ── */
 .prose {
   @apply text-foreground max-w-none;

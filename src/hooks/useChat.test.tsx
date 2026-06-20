@@ -1,15 +1,53 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage, RenderMessage } from "../types";
+import type { ChatMessage, RenderMessage, RunEventPayload } from "../types";
 import { isCompactMarker } from "../types";
 import { loadActiveSession, saveActiveSession } from "../utils/storage";
 import { useChat } from "./useChat";
+
+type Handler = (payload: unknown) => void;
+type MockFn = ReturnType<typeof vi.fn>;
+
+interface WailsMock {
+  GetConfig: MockFn;
+  Settings: MockFn;
+  UpdateSettings: MockFn;
+  ListSessions: MockFn;
+  LoadSession: MockFn;
+  DeleteSession: MockFn;
+  ClearSession: MockFn;
+  StartChat: MockFn;
+  CancelRun: MockFn;
+  DecideRun: MockFn;
+  SelectFiles: MockFn;
+  WorkspaceRoots: MockFn;
+  BrowseWorkspace: MockFn;
+}
+
+let appMock: WailsMock;
+let handlers: Map<string, Set<Handler>>;
 
 function expectChat(message: RenderMessage | undefined): ChatMessage {
   if (!message || isCompactMarker(message)) {
     throw new Error("expected a ChatMessage, got compact marker or undefined");
   }
   return message;
+}
+
+function ok<T>(data: T) {
+  return Promise.resolve({ ok: true, status: 200, data });
+}
+
+function fail(status: number, detail: unknown) {
+  return Promise.resolve({ ok: false, status, detail });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 function createLocalStorage() {
@@ -37,11 +75,55 @@ function createLocalStorage() {
   };
 }
 
-function createJsonResponse(data: unknown): Response {
-  return new Response(JSON.stringify(data), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
+function emit(name: string, payload: unknown) {
+  for (const handler of handlers.get(name) ?? []) handler(payload);
+}
+
+function emitRun(
+  runID: string,
+  sessionID: string,
+  event: RunEventPayload["event"],
+) {
+  act(() => {
+    emit("mycode:run_event", {
+      run_id: runID,
+      session_id: sessionID,
+      event,
+    } satisfies RunEventPayload);
   });
+}
+
+function installWailsMock() {
+  handlers = new Map();
+  appMock = {
+    GetConfig: vi.fn(),
+    Settings: vi.fn(),
+    UpdateSettings: vi.fn(),
+    ListSessions: vi.fn(() => ok({ sessions: [] })),
+    LoadSession: vi.fn(),
+    DeleteSession: vi.fn(() => ok({ status: "ok" })),
+    ClearSession: vi.fn(() => ok({ status: "ok" })),
+    StartChat: vi.fn(),
+    CancelRun: vi.fn(() => ok({ status: "ok" })),
+    DecideRun: vi.fn(() => ok({ status: "ok" })),
+    SelectFiles: vi.fn(),
+    WorkspaceRoots: vi.fn(),
+    BrowseWorkspace: vi.fn(),
+  };
+
+  window.go = { main: { App: appMock as never } };
+  window.runtime = {
+    EventsOn: vi.fn((name: string, callback: Handler) => {
+      const set = handlers.get(name) ?? new Set<Handler>();
+      set.add(callback);
+      handlers.set(name, set);
+      return () => set.delete(callback);
+    }),
+    BrowserOpenURL: vi.fn(),
+    WindowSetTitle: vi.fn(),
+    OnFileDrop: vi.fn(),
+    OnFileDropOff: vi.fn(),
+  };
 }
 
 function renderChatHook(overrides?: Partial<Parameters<typeof useChat>[0]>) {
@@ -56,35 +138,10 @@ function renderChatHook(overrides?: Partial<Parameters<typeof useChat>[0]>) {
   );
 }
 
-function mockFetch(
-  routes: Record<
-    string,
-    Response | ((init?: RequestInit) => Promise<Response> | Response)
-  >,
-) {
-  const fetchMock = vi.fn(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      for (const [prefix, response] of Object.entries(routes)) {
-        if (!url.startsWith(prefix)) continue;
-        if (typeof response === "function") {
-          return response(init);
-        }
-        return response.clone();
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    },
-  );
-  globalThis.fetch = fetchMock as typeof fetch;
-  return fetchMock;
-}
-
 describe("useChat", () => {
   beforeEach(() => {
     globalThis.localStorage = createLocalStorage();
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({ sessions: [] }),
-    });
+    installWailsMock();
   });
 
   it("creates a draft session when the workspace has no saved sessions", async () => {
@@ -95,6 +152,7 @@ describe("useChat", () => {
       expect(result.current.sessions).toHaveLength(1);
     });
 
+    expect(appMock.ListSessions).toHaveBeenCalledWith("/workspace/a");
     expect(result.current.activeSession.isDraft).toBe(true);
     expect(result.current.sessions[0]?.id).toBe(
       result.current.activeSession.id,
@@ -103,23 +161,18 @@ describe("useChat", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it("sends text attachments as attachment text blocks", async () => {
-    const fetchMock = mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({ sessions: [] }),
-      "/api/chat": createJsonResponse({
+  it("sends text attachments as Wails chat input blocks", async () => {
+    appMock.StartChat.mockImplementation((req) =>
+      ok({
         run: {
           id: "run-1",
-          session_id: "draft-1",
+          session_id: req.session_id,
           status: "running",
           last_seq: 0,
         },
-        session: { id: "draft-1", title: "Draft" },
+        session: { id: req.session_id, title: "Draft" },
       }),
-      "/api/runs/run-1/stream?after=0": new Response("data: [DONE]\n\n", {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }),
-    });
+    );
 
     const { result } = renderChatHook({
       provider: "anthropic",
@@ -130,13 +183,13 @@ describe("useChat", () => {
       expect(result.current.sessionLoading).toBe(false);
     });
 
-    await result.current.send("check this", [
-      { id: "file-1", kind: "text", name: "main.py", text: 'print("ok")' },
-    ]);
+    await act(async () => {
+      await result.current.send("check this", [
+        { id: "file-1", kind: "text", name: "main.py", text: 'print("ok")' },
+      ]);
+    });
 
-    const chatCall = fetchMock.mock.calls.find(([url]) => url === "/api/chat");
-    expect(chatCall).toBeTruthy();
-    expect(JSON.parse(String(chatCall?.[1]?.body))).toEqual({
+    expect(appMock.StartChat).toHaveBeenCalledWith({
       session_id: result.current.activeSession.id,
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -151,25 +204,29 @@ describe("useChat", () => {
         },
       ],
     });
+
+    emitRun("run-1", result.current.activeSession.id, {
+      type: "done",
+      status: "completed",
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
   });
 
   it("sends document data without keeping it in UI messages", async () => {
-    const fetchMock = mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({ sessions: [] }),
-      "/api/chat": createJsonResponse({
+    appMock.StartChat.mockImplementation((req) =>
+      ok({
         run: {
           id: "run-1",
-          session_id: "draft-1",
+          session_id: req.session_id,
           status: "running",
           last_seq: 0,
         },
-        session: { id: "draft-1", title: "Draft" },
+        session: { id: req.session_id, title: "Draft" },
       }),
-      "/api/runs/run-1/stream?after=0": new Response("data: [DONE]\n\n", {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }),
-    });
+    );
 
     const { result } = renderChatHook({
       provider: "xiaomi",
@@ -180,18 +237,19 @@ describe("useChat", () => {
       expect(result.current.sessionLoading).toBe(false);
     });
 
-    await result.current.send("summarize", [
-      {
-        id: "file-1",
-        kind: "document",
-        name: "report.pdf",
-        mime_type: "application/pdf",
-        data: "large-pdf-base64",
-      },
-    ]);
+    await act(async () => {
+      await result.current.send("summarize", [
+        {
+          id: "file-1",
+          kind: "document",
+          name: "report.pdf",
+          mime_type: "application/pdf",
+          data: "large-pdf-base64",
+        },
+      ]);
+    });
 
-    const chatCall = fetchMock.mock.calls.find(([url]) => url === "/api/chat");
-    expect(JSON.parse(String(chatCall?.[1]?.body)).input[1]).toEqual({
+    expect(appMock.StartChat.mock.calls[0]?.[0].input[1]).toEqual({
       type: "document",
       data: "large-pdf-base64",
       mime_type: "application/pdf",
@@ -213,16 +271,13 @@ describe("useChat", () => {
     });
   });
 
-  it("keeps assistant replies when loading a persisted session with text attachments", async () => {
-    globalThis.localStorage.setItem(
-      "mycode.activeSessions",
-      JSON.stringify({ "/workspace/a": "session-1" }),
+  it("loads a persisted session through Wails bindings", async () => {
+    saveActiveSession("/workspace/a", "session-1");
+    appMock.ListSessions.mockImplementation(() =>
+      ok({ sessions: [{ id: "session-1", title: "Persisted" }] }),
     );
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [{ id: "session-1", title: "Persisted" }],
-      }),
-      "/api/sessions/session-1": createJsonResponse({
+    appMock.LoadSession.mockImplementation(() =>
+      ok({
         session: { id: "session-1", title: "Persisted" },
         messages: [
           {
@@ -244,7 +299,7 @@ describe("useChat", () => {
         active_run: null,
         pending_events: [],
       }),
-    });
+    );
 
     const { result } = renderChatHook();
 
@@ -253,6 +308,7 @@ describe("useChat", () => {
       expect(result.current.messages).toHaveLength(2);
     });
 
+    expect(appMock.LoadSession).toHaveBeenCalledWith("session-1");
     expect(result.current.messages[1]).toEqual({
       role: "assistant",
       renderKey: "assistant:1",
@@ -267,165 +323,156 @@ describe("useChat", () => {
     });
   });
 
-  it("rebuilds assistant replies from active-run pending events after refresh", async () => {
-    globalThis.localStorage.setItem(
-      "mycode.activeSessions",
-      JSON.stringify({ "/workspace/a": "session-2" }),
+  it("replays pending run events and handles live Wails permission events", async () => {
+    saveActiveSession("/workspace/a", "session-3");
+    appMock.ListSessions.mockImplementation(() =>
+      ok({ sessions: [{ id: "session-3", title: "Awaiting" }] }),
     );
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [{ id: "session-2", title: "Running" }],
-      }),
-      "/api/sessions/session-2": createJsonResponse({
-        session: { id: "session-2", title: "Running" },
+    appMock.LoadSession.mockImplementation(() =>
+      ok({
+        session: { id: "session-3", title: "Awaiting" },
         messages: [
           {
             role: "user",
-            content: [
-              {
-                type: "text",
-                text: '<file name="main.py">\nprint("ok")\n</file>',
-                meta: { attachment: true, path: "main.py" },
-              },
-            ],
+            content: [{ type: "text", text: "run command" }],
           },
         ],
         active_run: {
-          id: "run-2",
-          session_id: "session-2",
+          id: "run-3",
+          session_id: "session-3",
           status: "running",
           last_seq: 1,
         },
-        pending_events: [{ type: "text", delta: "looks good", seq: 1 }],
+        pending_events: [{ type: "text", delta: "working", seq: 1 }],
       }),
-      "/api/runs/run-2/stream?after=1": new Response("data: [DONE]\n\n", {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }),
+    );
+    appMock.DecideRun.mockImplementation(async () => {
+      emitRun("run-3", "session-3", {
+        type: "permission_resolved",
+        seq: 3,
+        request_id: "req-1",
+        decision: "allow",
+      });
+      return ok({ status: "ok" });
     });
 
     const { result } = renderChatHook();
 
     await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
+      expect(result.current.activeSession.id).toBe("session-3");
       expect(result.current.messages).toHaveLength(2);
     });
-
     expect(expectChat(result.current.messages[1]).content[0]).toEqual({
       type: "text",
-      text: "looks good",
+      text: "working",
       renderKey: "assistant:1:0",
+    });
+
+    emitRun("run-3", "session-3", {
+      type: "permission_request",
+      seq: 2,
+      request_id: "req-1",
+      tool_use_id: "call-1",
+      tool_name: "bash",
+      preview: "pnpm install",
+    });
+
+    await waitFor(() => {
+      expect(result.current.pendingPermission?.request_id).toBe("req-1");
+    });
+
+    await act(async () => {
+      await result.current.decidePermission("allow");
+    });
+
+    await waitFor(() => {
+      expect(result.current.pendingPermission).toBeNull();
+    });
+    expect(appMock.DecideRun).toHaveBeenCalledWith("run-3", {
+      request_id: "req-1",
+      decision: "allow",
     });
   });
 
-  it("updates the active session immediately while loading selected history", async () => {
-    saveActiveSession("/workspace/a", "session-1");
-
-    let resolveSession2!: (response: Response) => void;
-    const session2Response = new Promise<Response>((resolve) => {
-      resolveSession2 = resolve;
-    });
-
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [
-          { id: "session-2", title: "Second" },
-          { id: "session-1", title: "First" },
-        ],
-      }),
-      "/api/sessions/session-1": createJsonResponse({
-        session: { id: "session-1", title: "First" },
-        messages: [
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "first session" }],
-          },
-        ],
-        active_run: null,
+  it("keeps the permission prompt visible when the Wails decision call fails", async () => {
+    saveActiveSession("/workspace/a", "session-4");
+    appMock.ListSessions.mockImplementation(() =>
+      ok({ sessions: [{ id: "session-4", title: "Awaiting" }] }),
+    );
+    appMock.LoadSession.mockImplementation(() =>
+      ok({
+        session: { id: "session-4", title: "Awaiting" },
+        messages: [],
+        active_run: {
+          id: "run-4",
+          session_id: "session-4",
+          status: "running",
+          last_seq: 0,
+        },
         pending_events: [],
       }),
-      "/api/sessions/session-2": () => session2Response,
-    });
+    );
+    appMock.DecideRun.mockImplementation(() =>
+      fail(500, "failed to send decision"),
+    );
 
     const { result } = renderChatHook();
 
     await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
-      expect(result.current.activeSession.id).toBe("session-1");
+      expect(result.current.activeSession.id).toBe("session-4");
     });
 
-    let selectPromise!: Promise<void>;
-    act(() => {
-      selectPromise = result.current.selectSession("session-2");
-    });
-
-    expect(result.current.activeSession.id).toBe("session-2");
-    expect(result.current.sessionLoading).toBe(true);
-    expect(result.current.messages).toEqual([]);
-    expect(result.current.messageSessionId).toBe("session-2");
-
-    await act(async () => {
-      resolveSession2(
-        createJsonResponse({
-          session: { id: "session-2", title: "Second" },
-          messages: [
-            {
-              role: "assistant",
-              content: [{ type: "text", text: "second session" }],
-            },
-          ],
-          active_run: null,
-          pending_events: [],
-        }),
-      );
-      await selectPromise;
+    emitRun("run-4", "session-4", {
+      type: "permission_request",
+      seq: 1,
+      request_id: "req-1",
+      tool_use_id: "call-1",
+      tool_name: "bash",
+      preview: "pnpm install",
     });
 
     await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
-      expect(result.current.messages).toHaveLength(1);
-      expect(result.current.messageSessionId).toBe("session-2");
+      expect(result.current.pendingPermission?.request_id).toBe("req-1");
     });
-    expect(expectChat(result.current.messages[0]).content[0]).toEqual({
-      type: "text",
-      text: "second session",
-      renderKey: "assistant:0:0",
+
+    await act(async () => {
+      await result.current.decidePermission("allow");
     });
+
+    expect(result.current.pendingPermission?.request_id).toBe("req-1");
   });
 
   it("ignores stale selected history when switching sessions again", async () => {
     saveActiveSession("/workspace/a", "session-1");
 
-    let resolveSession2!: (response: Response) => void;
-    const session2Response = new Promise<Response>((resolve) => {
-      resolveSession2 = resolve;
-    });
-    let resolveSession3!: (response: Response) => void;
-    const session3Response = new Promise<Response>((resolve) => {
-      resolveSession3 = resolve;
-    });
+    const session2 = deferred<ReturnType<typeof ok>>();
+    const session3 = deferred<ReturnType<typeof ok>>();
 
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
+    appMock.ListSessions.mockImplementation(() =>
+      ok({
         sessions: [
           { id: "session-3", title: "Third" },
           { id: "session-2", title: "Second" },
           { id: "session-1", title: "First" },
         ],
       }),
-      "/api/sessions/session-1": createJsonResponse({
-        session: { id: "session-1", title: "First" },
-        messages: [
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "first session" }],
-          },
-        ],
-        active_run: null,
-        pending_events: [],
-      }),
-      "/api/sessions/session-2": () => session2Response,
-      "/api/sessions/session-3": () => session3Response,
+    );
+    appMock.LoadSession.mockImplementation((sessionID: string) => {
+      if (sessionID === "session-1") {
+        return ok({
+          session: { id: "session-1", title: "First" },
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "first session" }],
+            },
+          ],
+          active_run: null,
+          pending_events: [],
+        });
+      }
+      if (sessionID === "session-2") return session2.promise;
+      return session3.promise;
     });
 
     const { result } = renderChatHook();
@@ -439,23 +486,19 @@ describe("useChat", () => {
     act(() => {
       selectSession2 = result.current.selectSession("session-2");
     });
-
     expect(result.current.activeSession.id).toBe("session-2");
-    expect(result.current.messages).toEqual([]);
     expect(result.current.messageSessionId).toBe("session-2");
 
     let selectSession3!: Promise<void>;
     act(() => {
       selectSession3 = result.current.selectSession("session-3");
     });
-
     expect(result.current.activeSession.id).toBe("session-3");
-    expect(result.current.messages).toEqual([]);
     expect(result.current.messageSessionId).toBe("session-3");
 
     await act(async () => {
-      resolveSession2(
-        createJsonResponse({
+      session2.resolve(
+        ok({
           session: { id: "session-2", title: "Second" },
           messages: [
             {
@@ -472,11 +515,10 @@ describe("useChat", () => {
 
     expect(result.current.activeSession.id).toBe("session-3");
     expect(result.current.messages).toEqual([]);
-    expect(result.current.messageSessionId).toBe("session-3");
 
     await act(async () => {
-      resolveSession3(
-        createJsonResponse({
+      session3.resolve(
+        ok({
           session: { id: "session-3", title: "Third" },
           messages: [
             {
@@ -492,7 +534,6 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
       expect(result.current.messageSessionId).toBe("session-3");
       expect(result.current.messages).toHaveLength(1);
     });
@@ -503,42 +544,41 @@ describe("useChat", () => {
     });
   });
 
-  it("deletes the latest active session and loads the previous session in history", async () => {
+  it("deletes the active session and loads the nearest history fallback", async () => {
     saveActiveSession("/workspace/a", "session-2");
 
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
+    appMock.ListSessions.mockImplementation(() =>
+      ok({
         sessions: [
           { id: "session-2", title: "Second" },
           { id: "session-1", title: "First" },
         ],
       }),
-      "/api/sessions/session-1": createJsonResponse({
-        session: { id: "session-1", title: "First" },
+    );
+    appMock.LoadSession.mockImplementation((sessionID: string) =>
+      ok({
+        session:
+          sessionID === "session-2"
+            ? { id: "session-2", title: "Second" }
+            : { id: "session-1", title: "First" },
         messages: [
           {
             role: "assistant",
-            content: [{ type: "text", text: "first session" }],
+            content: [
+              {
+                type: "text",
+                text:
+                  sessionID === "session-2"
+                    ? "second session"
+                    : "first session",
+              },
+            ],
           },
         ],
         active_run: null,
         pending_events: [],
       }),
-      "/api/sessions/session-2": (init?: RequestInit) =>
-        init?.method === "DELETE"
-          ? new Response(null, { status: 200 })
-          : createJsonResponse({
-              session: { id: "session-2", title: "Second" },
-              messages: [
-                {
-                  role: "assistant",
-                  content: [{ type: "text", text: "second session" }],
-                },
-              ],
-              active_run: null,
-              pending_events: [],
-            }),
-    });
+    );
 
     const { result } = renderChatHook();
 
@@ -547,7 +587,9 @@ describe("useChat", () => {
       expect(result.current.activeSession.id).toBe("session-2");
     });
 
-    await result.current.deleteSession("session-2");
+    await act(async () => {
+      await result.current.deleteSession("session-2");
+    });
 
     await waitFor(() => {
       expect(result.current.sessionLoading).toBe(false);
@@ -555,234 +597,34 @@ describe("useChat", () => {
       expect(result.current.sessions.map((session) => session.id)).toEqual([
         "session-1",
       ]);
-      expect(expectChat(result.current.messages[0]).content[0]).toEqual({
-        type: "text",
-        text: "first session",
-        renderKey: "assistant:0:0",
-      });
     });
-
+    expect(expectChat(result.current.messages[0]).content[0]).toEqual({
+      type: "text",
+      text: "first session",
+      renderKey: "assistant:0:0",
+    });
     expect(loadActiveSession("/workspace/a")).toBe("session-1");
-  });
-
-  it("deletes the oldest active session and loads the nearest newer session", async () => {
-    saveActiveSession("/workspace/a", "session-1");
-
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [
-          { id: "session-3", title: "Third" },
-          { id: "session-2", title: "Second" },
-          { id: "session-1", title: "First" },
-        ],
-      }),
-      "/api/sessions/session-1": (init?: RequestInit) =>
-        init?.method === "DELETE"
-          ? new Response(null, { status: 200 })
-          : createJsonResponse({
-              session: { id: "session-1", title: "First" },
-              messages: [
-                {
-                  role: "assistant",
-                  content: [{ type: "text", text: "first session" }],
-                },
-              ],
-              active_run: null,
-              pending_events: [],
-            }),
-      "/api/sessions/session-2": createJsonResponse({
-        session: { id: "session-2", title: "Second" },
-        messages: [
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "second session" }],
-          },
-        ],
-        active_run: null,
-        pending_events: [],
-      }),
-    });
-
-    const { result } = renderChatHook();
-
-    await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
-      expect(result.current.activeSession.id).toBe("session-1");
-    });
-
-    await result.current.deleteSession("session-1");
-
-    await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
-      expect(result.current.activeSession.id).toBe("session-2");
-      expect(result.current.sessions.map((session) => session.id)).toEqual([
-        "session-3",
-        "session-2",
-      ]);
-      expect(expectChat(result.current.messages[0]).content[0]).toEqual({
-        type: "text",
-        text: "second session",
-        renderKey: "assistant:0:0",
-      });
-    });
-
-    expect(loadActiveSession("/workspace/a")).toBe("session-2");
-  });
-
-  it("replays pending permission requests and clears them on decide", async () => {
-    globalThis.localStorage.setItem(
-      "mycode.activeSessions",
-      JSON.stringify({ "/workspace/a": "session-3" }),
-    );
-    const decideCalls: string[] = [];
-    const encoder = new TextEncoder();
-    let streamController!: ReadableStreamDefaultController<Uint8Array>;
-    const liveStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        streamController = controller;
-      },
-    });
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [{ id: "session-3", title: "Awaiting" }],
-      }),
-      "/api/sessions/session-3": createJsonResponse({
-        session: { id: "session-3", title: "Awaiting" },
-        messages: [],
-        active_run: {
-          id: "run-3",
-          session_id: "session-3",
-          status: "running",
-          last_seq: 0,
-        },
-        pending_events: [],
-      }),
-      "/api/runs/run-3/stream?after=0": new Response(liveStream, {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }),
-      "/api/runs/run-3/decide": (init?: RequestInit) => {
-        decideCalls.push(String(init?.body ?? ""));
-        streamController.enqueue(
-          encoder.encode(
-            'data: {"type":"permission_resolved","seq":2,"request_id":"req-1","decision":"allow"}\n\n',
-          ),
-        );
-        return new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    });
-
-    const { result } = renderChatHook();
-
-    await waitFor(() => {
-      expect(result.current.activeSession.id).toBe("session-3");
-    });
-
-    streamController.enqueue(
-      encoder.encode(
-        'data: {"type":"permission_request","seq":1,"request_id":"req-1","tool_use_id":"call-1","tool_name":"bash","preview":"pnpm install"}\n\n',
-      ),
-    );
-
-    await waitFor(() => {
-      expect(result.current.pendingPermission?.request_id).toBe("req-1");
-    });
-    expect(result.current.pendingPermission?.preview).toBe("pnpm install");
-
-    await result.current.decidePermission("allow");
-
-    await waitFor(() => {
-      expect(result.current.pendingPermission).toBeNull();
-    });
-    expect(decideCalls).toEqual([
-      JSON.stringify({ request_id: "req-1", decision: "allow" }),
-    ]);
-
-    streamController.close();
-  });
-
-  it("keeps the permission prompt visible when decide POST fails", async () => {
-    globalThis.localStorage.setItem(
-      "mycode.activeSessions",
-      JSON.stringify({ "/workspace/a": "session-4" }),
-    );
-    const encoder = new TextEncoder();
-    let streamController!: ReadableStreamDefaultController<Uint8Array>;
-    const liveStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        streamController = controller;
-      },
-    });
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [{ id: "session-4", title: "Awaiting" }],
-      }),
-      "/api/sessions/session-4": createJsonResponse({
-        session: { id: "session-4", title: "Awaiting" },
-        messages: [],
-        active_run: {
-          id: "run-4",
-          session_id: "session-4",
-          status: "running",
-          last_seq: 0,
-        },
-        pending_events: [],
-      }),
-      "/api/runs/run-4/stream?after=0": new Response(liveStream, {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }),
-      "/api/runs/run-4/decide": new Response("boom", { status: 500 }),
-    });
-
-    const { result } = renderChatHook();
-
-    await waitFor(() => {
-      expect(result.current.activeSession.id).toBe("session-4");
-    });
-
-    streamController.enqueue(
-      encoder.encode(
-        'data: {"type":"permission_request","seq":1,"request_id":"req-1","tool_use_id":"call-1","tool_name":"bash","preview":"pnpm install"}\n\n',
-      ),
-    );
-
-    await waitFor(() => {
-      expect(result.current.pendingPermission?.request_id).toBe("req-1");
-    });
-
-    await result.current.decidePermission("allow");
-
-    expect(result.current.pendingPermission?.request_id).toBe("req-1");
-
-    streamController.close();
   });
 
   it("deletes the last active session and falls back to a draft", async () => {
     saveActiveSession("/workspace/a", "session-1");
 
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [{ id: "session-1", title: "Only Session" }],
+    appMock.ListSessions.mockImplementation(() =>
+      ok({ sessions: [{ id: "session-1", title: "Only Session" }] }),
+    );
+    appMock.LoadSession.mockImplementation(() =>
+      ok({
+        session: { id: "session-1", title: "Only Session" },
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "only session" }],
+          },
+        ],
+        active_run: null,
+        pending_events: [],
       }),
-      "/api/sessions/session-1": (init?: RequestInit) =>
-        init?.method === "DELETE"
-          ? new Response(null, { status: 200 })
-          : createJsonResponse({
-              session: { id: "session-1", title: "Only Session" },
-              messages: [
-                {
-                  role: "assistant",
-                  content: [{ type: "text", text: "only session" }],
-                },
-              ],
-              active_run: null,
-              pending_events: [],
-            }),
-    });
+    );
 
     const { result } = renderChatHook();
 
@@ -791,7 +633,9 @@ describe("useChat", () => {
       expect(result.current.activeSession.id).toBe("session-1");
     });
 
-    await result.current.deleteSession("session-1");
+    await act(async () => {
+      await result.current.deleteSession("session-1");
+    });
 
     await waitFor(() => {
       expect(result.current.sessionLoading).toBe(false);

@@ -1,7 +1,7 @@
 /**
  * Global settings panel.
  *
- * Reads/writes ~/.mycode/config.json via /api/settings. Project-level
+ * Reads/writes ~/.mycode/config.json through the Wails native adapter. Project-level
  * .mycode/config.json files continue to override the global file at runtime
  * — the banner makes that explicit when the app is running inside a workspace
  * that has one.
@@ -24,6 +24,7 @@ import type {
 } from "../../types";
 import { cn } from "../../utils/cn";
 import { isReasoningEffort } from "../../utils/config";
+import { wailsAPI } from "../../utils/wails";
 import { useTheme } from "../ThemeProvider";
 import { Field, NativeSelect, Section, Segmented, TextInput } from "./controls";
 import { ProviderCard, type ProviderDraft } from "./ProviderCard";
@@ -316,22 +317,9 @@ export function SettingsPanel({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          config: buildPayload(draft, defaultProvider),
-        }),
-      });
-      if (!res.ok) {
-        let message = `Save failed (${res.status})`;
-        try {
-          const data = (await res.json()) as { detail?: string };
-          if (data?.detail) message = data.detail;
-        } catch {}
-        throw new Error(message);
-      }
-      const updated = (await res.json()) as SettingsResponse;
+      const updated = await wailsAPI.updateSettings(
+        buildPayload(draft, defaultProvider),
+      );
       setDraft(buildDraft(updated));
       onSettingsSaved?.(updated);
       onClose();
