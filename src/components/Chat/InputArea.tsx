@@ -255,6 +255,11 @@ export const InputArea = memo(function InputArea({
     [],
   );
 
+  const resetDragging = useCallback(() => {
+    dragCounterRef.current = 0;
+    setDragging(false);
+  }, []);
+
   useEffect(
     () => () => {
       if (noticeTimerRef.current !== null) {
@@ -370,6 +375,8 @@ export const InputArea = memo(function InputArea({
 
   useEffect(() => {
     return onNativeFileDrop((x, y, paths) => {
+      resetDragging();
+
       const rect = dropZoneRef.current?.getBoundingClientRect();
       if (
         !rect ||
@@ -385,7 +392,7 @@ export const InputArea = memo(function InputArea({
         await attachFiles(await readFiles(paths));
       })();
     });
-  }, [attachFiles]);
+  }, [attachFiles, resetDragging]);
 
   const handlePickFiles = async () => {
     if (loading || disabled) return;
@@ -413,8 +420,7 @@ export const InputArea = memo(function InputArea({
   const handleDrop = async (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragCounterRef.current = 0;
-    setDragging(false);
+    resetDragging();
     await attachFiles(Array.from(e.dataTransfer.files));
   };
 
