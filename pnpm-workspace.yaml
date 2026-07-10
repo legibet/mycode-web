@@ -1,6 +1,10 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - typescript@7.0.2
+  # Native binaries are gated by the exact main package version above.
+  - '@typescript/typescript-*'
 trustPolicy: no-downgrade
 # Only check trust downgrades for versions published in the last 90 days;
 # older versions (e.g. reselect@5.1.1 from 2024) predate provenance adoption.
