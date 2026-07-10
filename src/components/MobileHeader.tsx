@@ -26,7 +26,7 @@ export function MobileHeader({
         <Menu className="size-5" />
       </button>
 
-      <span className="text-xs font-mono text-foreground/70 truncate max-w-[60%] text-center">
+      <span className="text-xs text-foreground/70 truncate max-w-[60%] text-center">
         {title || "mycode"}
       </span>
 

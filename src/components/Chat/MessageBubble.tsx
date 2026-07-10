@@ -538,7 +538,7 @@ export const MessageBubble = memo(function MessageBubble({
             className={cn(
               "flex items-center justify-center size-6 rounded-sm active:scale-95 transition-[color,scale] duration-150",
               copied
-                ? "text-emerald-400"
+                ? "text-accent"
                 : "text-muted-foreground/50 hover:text-foreground",
             )}
             title="Copy"

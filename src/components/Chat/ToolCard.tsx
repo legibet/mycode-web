@@ -6,7 +6,13 @@
  * preserved.
  */
 
-import { FileText, PenLine, SquarePen, Terminal } from "lucide-react";
+import {
+  FileText,
+  type LucideIcon,
+  PenLine,
+  SquarePen,
+  Terminal,
+} from "lucide-react";
 import { lazy, memo, Suspense, useState } from "react";
 import { cn } from "../../utils/cn";
 
@@ -94,11 +100,11 @@ function EditDiffFallback({ edits }: { edits: EditEntry[] }) {
   );
 }
 
-const TOOL_META = {
-  read: { icon: FileText, label: "read" },
-  write: { icon: PenLine, label: "write" },
-  edit: { icon: SquarePen, label: "edit" },
-  bash: { icon: Terminal, label: "bash" },
+const TOOL_ICON: Record<string, LucideIcon> = {
+  bash: Terminal,
+  read: FileText,
+  write: PenLine,
+  edit: SquarePen,
 };
 
 interface ToolCardProps {
@@ -115,20 +121,10 @@ interface ToolCardProps {
 // Shared result block — code viewer for tool output (not a card shell)
 // ---------------------------------------------------------------------------
 
-const RESULT_BASE =
-  "rounded-md px-3 py-2 font-mono text-[13px] leading-relaxed overflow-x-auto overflow-y-auto scrollbar-subtle whitespace-pre-wrap max-h-[240px]";
-
-function ResultBlock({ text, isError }: { text: string; isError: boolean }) {
+function ResultBlock({ text }: { text: string }) {
   if (!text) return null;
   return (
-    <div
-      className={cn(
-        RESULT_BASE,
-        isError
-          ? "bg-red-500/5 text-red-400/70"
-          : "bg-code text-muted-foreground",
-      )}
-    >
+    <div className="rounded-md bg-code px-3 py-2 font-mono text-[13px] leading-relaxed text-muted-foreground overflow-x-auto overflow-y-auto scrollbar-subtle whitespace-pre-wrap max-h-[240px]">
       {text}
     </div>
   );
@@ -188,8 +184,8 @@ function CollapsedSuffix({
     if (!stats || (stats.added === 0 && stats.removed === 0)) return null;
     return (
       <span className="shrink-0 text-[12px] font-mono tabular-nums">
-        <span className="text-emerald-500/70">+{stats.added}</span>
-        <span className="text-red-400/70 ml-1">−{stats.removed}</span>
+        <span className="text-diff-added">+{stats.added}</span>
+        <span className="text-diff-removed ml-1">−{stats.removed}</span>
       </span>
     );
   }
@@ -212,15 +208,7 @@ function CollapsedSuffix({
 // Expanded body components — one per tool type
 // ---------------------------------------------------------------------------
 
-function BashBody({
-  args,
-  display,
-  isError,
-}: {
-  args: Args;
-  display: string;
-  isError: boolean;
-}) {
+function BashBody({ args, display }: { args: Args; display: string }) {
   const command = asString((args as BashArgs | undefined)?.command);
 
   return (
@@ -233,13 +221,9 @@ function BashBody({
           </span>
         </div>
       )}
-      <ResultBlock text={display} isError={isError} />
+      <ResultBlock text={display} />
     </div>
   );
-}
-
-function ReadBody({ display, isError }: { display: string; isError: boolean }) {
-  return <ResultBlock text={display} isError={isError} />;
 }
 
 function WriteBody({
@@ -260,7 +244,7 @@ function WriteBody({
           {content}
         </div>
       )}
-      {isError && <ResultBlock text={display} isError />}
+      {isError && <ResultBlock text={display} />}
     </div>
   );
 }
@@ -288,7 +272,7 @@ function EditBody({
         ) : (
           <EditDiffFallback edits={edits} />
         )}
-        {isError && <ResultBlock text={display} isError />}
+        {isError && <ResultBlock text={display} />}
       </div>
     );
   }
@@ -296,7 +280,7 @@ function EditBody({
   return (
     <div className="space-y-2">
       {args && Object.keys(args).length > 0 && <GenericArgs args={args} />}
-      <ResultBlock text={display} isError={isError} />
+      <ResultBlock text={display} />
     </div>
   );
 }
@@ -344,17 +328,14 @@ export const ToolCard = memo(function ToolCard({
 
   const status = pending ? "pending" : resolvedIsError ? "error" : "success";
 
-  const meta = Object.hasOwn(TOOL_META, name)
-    ? TOOL_META[name as keyof typeof TOOL_META]
-    : { icon: Terminal, label: name };
-  const Icon = meta.icon;
+  const Icon = TOOL_ICON[name] ?? Terminal;
   const preview = getPreview(name, args);
 
   const body =
     name === "bash" ? (
-      <BashBody args={args} display={display} isError={resolvedIsError} />
+      <BashBody args={args} display={display} />
     ) : name === "read" ? (
-      <ReadBody display={display} isError={resolvedIsError} />
+      <ResultBlock text={display} />
     ) : name === "write" ? (
       <WriteBody args={args} display={display} isError={resolvedIsError} />
     ) : name === "edit" ? (
@@ -367,7 +348,7 @@ export const ToolCard = memo(function ToolCard({
     ) : (
       <>
         {args && Object.keys(args).length > 0 && <GenericArgs args={args} />}
-        <ResultBlock text={display} isError={resolvedIsError} />
+        <ResultBlock text={display} />
       </>
     );
 
