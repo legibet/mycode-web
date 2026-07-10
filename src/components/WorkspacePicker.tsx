@@ -58,6 +58,7 @@ const toRelativePath = (root: string, absolutePath: string): string => {
 };
 
 const EMPTY_HISTORY: string[] = [];
+const EMPTY_ENTRIES: WorkspaceEntry[] = [];
 
 const rootLabel = (value: string): string => {
   if (!value || value === "/" || value === "\\") return "/";
@@ -167,7 +168,7 @@ export function WorkspacePicker({
 
   const root = activeTarget?.root ?? "";
   const path = activeTarget?.path ?? "";
-  const entries = browseData?.entries ?? [];
+  const entries = browseData?.entries ?? EMPTY_ENTRIES;
   const current = browseData?.current ?? "";
 
   const loading =

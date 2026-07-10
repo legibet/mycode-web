@@ -211,6 +211,8 @@ function buildPayload(
   return config;
 }
 
+const EMPTY_PROVIDER_TYPES: string[] = [];
+
 export function SettingsPanel({
   open,
   onClose,
@@ -228,7 +230,8 @@ export function SettingsPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const providerTypes = settings?.options.provider_types ?? [];
+  const providerTypes =
+    settings?.options.provider_types ?? EMPTY_PROVIDER_TYPES;
   const effortOptions = settings?.options.reasoning_efforts ?? [];
   const envByName = settings?.env ?? {};
   const providerTypeEnvVars = settings?.provider_type_env_vars ?? {};
