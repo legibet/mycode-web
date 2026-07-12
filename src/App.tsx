@@ -198,6 +198,7 @@ function AppContent() {
     createSession,
     selectSession,
     deleteSession,
+    clearSession,
   } = useChat(config);
 
   const handleConfigUpdate = useCallback(
@@ -316,6 +317,17 @@ function AppContent() {
     [activeSession?.id, clearAttachments, deleteSession],
   );
 
+  const handleSlashCommand = useCallback(
+    (name: "/new" | "/clear") => {
+      if (name === "/new") {
+        handleCreateSession();
+        return;
+      }
+      void clearSession();
+    },
+    [handleCreateSession, clearSession],
+  );
+
   return (
     <Layout>
       <div className="relative flex h-full min-h-0 overflow-hidden">
@@ -409,6 +421,7 @@ function AppContent() {
               config={config}
               remoteConfig={remoteConfig}
               onUpdateConfig={handleConfigUpdate}
+              onSlashCommand={handleSlashCommand}
               disabled={setupRequired}
               disabledReason={workspaceDisabledReason}
             />

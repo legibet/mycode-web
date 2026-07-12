@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
   memo,
   useCallback,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -20,7 +21,9 @@ import type {
   SetString,
 } from "../../types";
 import { cn } from "../../utils/cn";
+import { matchSlashCommands, type SlashCommand } from "../../utils/completion";
 import { randomId } from "../../utils/id";
+import { CompletionMenu, completionItemDomId } from "./CompletionMenu";
 import { EffortTrigger, ModelTrigger } from "./InputPills";
 
 // File pickers only understand MIME types and extensions, so keep the text
@@ -106,9 +109,12 @@ interface InputAreaProps {
   config: LocalConfig;
   remoteConfig: RemoteConfig | null;
   onUpdateConfig: (config: LocalConfig) => void;
+  onSlashCommand?: (name: SlashCommand["name"]) => void;
   disabledReason?: string | undefined;
   disabled?: boolean | undefined;
 }
+
+const COMPLETION_MENU_ID = "input-completion-menu";
 
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -194,6 +200,7 @@ export const InputArea = memo(function InputArea({
   config,
   remoteConfig,
   onUpdateConfig,
+  onSlashCommand,
   disabledReason,
   disabled: disabledProp = false,
 }: InputAreaProps) {
@@ -201,8 +208,70 @@ export const InputArea = memo(function InputArea({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounterRef = useRef(0);
+  const [activeIndex, setActiveIndex] = useState(0);
+  // Both invalidate automatically on any input change: they remember the
+  // input they were set for.
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  const [confirmingFor, setConfirmingFor] = useState<{
+    command: SlashCommand;
+    input: string;
+  } | null>(null);
 
   const disabled = disabledProp || Boolean(disabledReason);
+
+  // Slash commands act on the conversation, so stay quiet while a run is
+  // streaming or attachments are pending (a "/clear" mid-compose is ambiguous).
+  const slashCandidates = useMemo(
+    () =>
+      !onSlashCommand || loading || disabled || files.length > 0
+        ? []
+        : matchSlashCommands(input),
+    [onSlashCommand, loading, disabled, files.length, input],
+  );
+
+  const confirming =
+    confirmingFor !== null && confirmingFor.input === input
+      ? confirmingFor.command
+      : null;
+  const menuItems = useMemo(() => {
+    if (confirming) {
+      return [
+        {
+          id: `${confirming.name}-confirm`,
+          label: confirming.name,
+          hint: "Enter again to confirm · Esc to cancel",
+        },
+      ];
+    }
+    return slashCandidates.map((command) => ({
+      id: command.name,
+      label: command.name,
+      hint: command.description,
+    }));
+  }, [confirming, slashCandidates]);
+  const menuOpen = menuItems.length > 0 && dismissedFor !== input;
+  const menuIndex = Math.min(activeIndex, menuItems.length - 1);
+
+  const selectMenuItem = (index: number) => {
+    if (confirming) {
+      onSlashCommand?.(confirming.name);
+      setConfirmingFor(null);
+      setInput("");
+      resetTextareaHeight();
+      return;
+    }
+    const command = slashCandidates[index];
+    if (!command) return;
+    if (command.confirm) {
+      // Normalize a partial token ("/c") to the full name for the confirm row.
+      setInput(command.name);
+      setConfirmingFor({ command, input: command.name });
+      return;
+    }
+    onSlashCommand?.(command.name);
+    setInput("");
+    resetTextareaHeight();
+  };
 
   const resetTextareaHeight = () => {
     if (textareaRef.current) {
@@ -216,6 +285,29 @@ export const InputArea = memo(function InputArea({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (menuOpen && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex(Math.min(menuIndex + 1, menuItems.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex(Math.max(menuIndex - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectMenuItem(menuIndex);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setDismissedFor(input);
+        setConfirmingFor(null);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!loading && !disabled) submit();
@@ -352,9 +444,17 @@ export const InputArea = memo(function InputArea({
           rows={1}
           name="message"
           aria-label="Message"
+          aria-autocomplete="list"
+          aria-controls={menuOpen ? COMPLETION_MENU_ID : undefined}
+          aria-activedescendant={
+            menuOpen
+              ? completionItemDomId(COMPLETION_MENU_ID, menuIndex)
+              : undefined
+          }
           value={input}
           onChange={(e) => {
             setInput(e.target.value);
+            setActiveIndex(0);
             e.target.style.height = "auto";
             e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
           }}
@@ -427,6 +527,16 @@ export const InputArea = memo(function InputArea({
             </button>
           )}
         </div>
+
+        {menuOpen && (
+          <CompletionMenu
+            menuId={COMPLETION_MENU_ID}
+            items={menuItems}
+            activeIndex={menuIndex}
+            onSelect={selectMenuItem}
+            onHighlight={setActiveIndex}
+          />
+        )}
 
         {dragging && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-accent/5 pointer-events-none z-10">
