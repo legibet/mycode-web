@@ -11,6 +11,8 @@ export interface CompletionItem {
   id: string;
   label: string;
   hint?: string;
+  /** Shown but not selectable (e.g. image file the model can't accept). */
+  disabled?: boolean;
 }
 
 export function completionItemDomId(menuId: string, index: number): string {
@@ -21,6 +23,8 @@ interface CompletionMenuProps {
   menuId: string;
   items: CompletionItem[];
   activeIndex: number;
+  /** Muted status row below the list (e.g. "N more matches…"). */
+  footer?: string | undefined;
   onSelect: (index: number) => void;
   onHighlight: (index: number) => void;
 }
@@ -29,6 +33,7 @@ export function CompletionMenu({
   menuId,
   items,
   activeIndex,
+  footer,
   onSelect,
   onHighlight,
 }: CompletionMenuProps) {
@@ -54,9 +59,11 @@ export function CompletionMenu({
             id={completionItemDomId(menuId, index)}
             role="option"
             aria-selected={index === activeIndex}
+            aria-disabled={item.disabled || undefined}
             className={cn(
               "flex cursor-pointer items-baseline gap-2 rounded-sm px-2 py-1.5 select-none",
               index === activeIndex && "bg-muted",
+              item.disabled && "cursor-default opacity-50",
             )}
             // Keep the textarea focused (and the soft keyboard open) when
             // tapping an item.
@@ -75,6 +82,11 @@ export function CompletionMenu({
             )}
           </div>
         ))}
+        {footer && (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

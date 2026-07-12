@@ -1,29 +1,28 @@
 /**
- * Chat input area with text/image/PDF attachment.
+ * Chat input area: Lexical composer plus upload attachments (image/PDF/text).
+ * Inline @workspace references live inside the composer; this component owns
+ * the upload strip, drag-and-drop, and the bottom action row.
  */
 
 import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import {
   type ChangeEvent,
-  type ClipboardEvent,
   type DragEvent,
-  type KeyboardEvent,
   memo,
   useCallback,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import type {
   AttachedFile,
+  ComposerSubmission,
   LocalConfig,
   RemoteConfig,
-  SetString,
 } from "../../types";
 import { cn } from "../../utils/cn";
-import { matchSlashCommands, type SlashCommand } from "../../utils/completion";
+import type { SlashCommand } from "../../utils/completion";
 import { randomId } from "../../utils/id";
-import { CompletionMenu, completionItemDomId } from "./CompletionMenu";
+import { Composer, type ComposerHandle } from "./Composer";
 import { EffortTrigger, ModelTrigger } from "./InputPills";
 
 // File pickers only understand MIME types and extensions, so keep the text
@@ -96,10 +95,8 @@ const TEXT_FILE_ACCEPT = [
 ].join(",");
 
 interface InputAreaProps {
-  input: string;
-  setInput: SetString;
   loading: boolean;
-  onSend: () => void;
+  onSubmit: (submission: ComposerSubmission) => Promise<boolean>;
   onCancel: () => void;
   supportsImages?: boolean;
   supportsDocuments?: boolean;
@@ -113,8 +110,6 @@ interface InputAreaProps {
   disabledReason?: string | undefined;
   disabled?: boolean | undefined;
 }
-
-const COMPLETION_MENU_ID = "input-completion-menu";
 
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -187,10 +182,8 @@ async function processFiles(
 }
 
 export const InputArea = memo(function InputArea({
-  input,
-  setInput,
   loading,
-  onSend,
+  onSubmit,
   onCancel,
   supportsImages = false,
   supportsDocuments = false,
@@ -204,120 +197,63 @@ export const InputArea = memo(function InputArea({
   disabledReason,
   disabled: disabledProp = false,
 }: InputAreaProps) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<ComposerHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounterRef = useRef(0);
-  const [activeIndex, setActiveIndex] = useState(0);
-  // Both invalidate automatically on any input change: they remember the
-  // input they were set for.
-  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
-  const [confirmingFor, setConfirmingFor] = useState<{
-    command: SlashCommand;
-    input: string;
-  } | null>(null);
+  const [hasContent, setHasContent] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const disabled = disabledProp || Boolean(disabledReason);
 
-  // Slash commands act on the conversation, so stay quiet while a run is
-  // streaming or attachments are pending (a "/clear" mid-compose is ambiguous).
-  const slashCandidates = useMemo(
-    () =>
-      !onSlashCommand || loading || disabled || files.length > 0
-        ? []
-        : matchSlashCommands(input),
-    [onSlashCommand, loading, disabled, files.length, input],
+  // Composer calls this on Enter; the send button routes through the same path.
+  const handleSubmission = useCallback(
+    async (submission: ComposerSubmission): Promise<boolean> => {
+      if (loading || disabled) return false;
+      if (
+        !submission.text.trim() &&
+        submission.workspaceFiles.length === 0 &&
+        files.length === 0
+      ) {
+        return false;
+      }
+      // Inline references the current model can't ingest block the send
+      // instead of being silently dropped (that would break the sentence).
+      const blockedKind = submission.workspaceFiles.find(
+        (ref) =>
+          (ref.kind === "image" && !supportsImages) ||
+          (ref.kind === "document" && !supportsDocuments),
+      )?.kind;
+      if (blockedKind) {
+        setSubmitError(
+          `Current model does not support ${
+            blockedKind === "image" ? "image" : "PDF"
+          } input — remove the reference or switch model.`,
+        );
+        return false;
+      }
+      setSubmitError(null);
+      return onSubmit(submission);
+    },
+    [
+      loading,
+      disabled,
+      files.length,
+      supportsImages,
+      supportsDocuments,
+      onSubmit,
+    ],
   );
 
-  const confirming =
-    confirmingFor !== null && confirmingFor.input === input
-      ? confirmingFor.command
-      : null;
-  const menuItems = useMemo(() => {
-    if (confirming) {
-      return [
-        {
-          id: `${confirming.name}-confirm`,
-          label: confirming.name,
-          hint: "Enter again to confirm · Esc to cancel",
-        },
-      ];
-    }
-    return slashCandidates.map((command) => ({
-      id: command.name,
-      label: command.name,
-      hint: command.description,
-    }));
-  }, [confirming, slashCandidates]);
-  const menuOpen = menuItems.length > 0 && dismissedFor !== input;
-  const menuIndex = Math.min(activeIndex, menuItems.length - 1);
-
-  const selectMenuItem = (index: number) => {
-    if (confirming) {
-      onSlashCommand?.(confirming.name);
-      setConfirmingFor(null);
-      setInput("");
-      resetTextareaHeight();
-      return;
-    }
-    const command = slashCandidates[index];
-    if (!command) return;
-    if (command.confirm) {
-      // Normalize a partial token ("/c") to the full name for the confirm row.
-      setInput(command.name);
-      setConfirmingFor({ command, input: command.name });
-      return;
-    }
-    onSlashCommand?.(command.name);
-    setInput("");
-    resetTextareaHeight();
-  };
-
-  const resetTextareaHeight = () => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
-  };
-
-  const submit = () => {
-    onSend();
-    resetTextareaHeight();
-  };
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (menuOpen && !e.nativeEvent.isComposing) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setActiveIndex(Math.min(menuIndex + 1, menuItems.length - 1));
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setActiveIndex(Math.max(menuIndex - 1, 0));
-        return;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        selectMenuItem(menuIndex);
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setDismissedFor(input);
-        setConfirmingFor(null);
-        return;
-      }
-    }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!loading && !disabled) submit();
-    }
-  };
+  const handleHasContentChange = useCallback((next: boolean) => {
+    setHasContent(next);
+    setSubmitError(null);
+  }, []);
 
   const attachFiles = useCallback(
-    async (files: File[]) => {
+    async (incoming: File[]) => {
       if (disabled) return;
-      const nextFiles = await processFiles(files, {
+      const nextFiles = await processFiles(incoming, {
         supportsImages,
         supportsDocuments,
       });
@@ -326,17 +262,17 @@ export const InputArea = memo(function InputArea({
     [disabled, onAttachFiles, supportsDocuments, supportsImages],
   );
 
-  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    await attachFiles(files);
-  };
+  const handlePasteFiles = useCallback(
+    (incoming: File[]) => {
+      void attachFiles(incoming);
+    },
+    [attachFiles],
+  );
 
-  const handlePaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.files);
-    if (files.length === 0) return;
-    e.preventDefault();
-    await attachFiles(files);
+  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const incoming = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    await attachFiles(incoming);
   };
 
   const handleDragEnter = (e: DragEvent) => {
@@ -365,7 +301,7 @@ export const InputArea = memo(function InputArea({
     await attachFiles(Array.from(e.dataTransfer.files));
   };
 
-  const hasInput = input.trim().length > 0 || files.length > 0;
+  const hasInput = hasContent || files.length > 0;
   const accept = [
     TEXT_FILE_ACCEPT,
     supportsImages ? "image/*" : null,
@@ -389,9 +325,9 @@ export const InputArea = memo(function InputArea({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {disabledReason && (
+        {(disabledReason || submitError) && (
           <div className="border-b border-border/30 px-3.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
-            {disabledReason}
+            {disabledReason || submitError}
           </div>
         )}
 
@@ -439,33 +375,19 @@ export const InputArea = memo(function InputArea({
           onChange={handleFileChange}
         />
 
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          name="message"
-          aria-label="Message"
-          aria-autocomplete="list"
-          aria-controls={menuOpen ? COMPLETION_MENU_ID : undefined}
-          aria-activedescendant={
-            menuOpen
-              ? completionItemDomId(COMPLETION_MENU_ID, menuIndex)
-              : undefined
-          }
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            setActiveIndex(0);
-            e.target.style.height = "auto";
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-          }}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={disabledReason || "Message…"}
+        <Composer
+          ref={composerRef}
           disabled={disabled}
-          className={cn(
-            "block w-full resize-none bg-transparent px-3.5 pt-4 pb-1.5 max-md:pt-3.5 text-base md:text-sm leading-relaxed placeholder:text-muted-foreground/40 focus-visible:outline-none max-h-50",
-            disabled ? "text-muted-foreground/50" : "text-foreground",
-          )}
+          placeholder={disabledReason || "Message…"}
+          loading={loading}
+          cwd={config.cwd}
+          supportsImages={supportsImages}
+          supportsDocuments={supportsDocuments}
+          hasUploads={files.length > 0}
+          onSubmit={handleSubmission}
+          onSlashCommand={onSlashCommand}
+          onPasteFiles={handlePasteFiles}
+          onHasContentChange={handleHasContentChange}
         />
 
         {/* Bottom row: attach + model · effort + send */}
@@ -513,7 +435,7 @@ export const InputArea = memo(function InputArea({
             <button
               type="button"
               aria-label="Send message"
-              onClick={submit}
+              onClick={() => composerRef.current?.submit()}
               disabled={!hasInput || disabled}
               className={cn(
                 "size-7 flex items-center justify-center rounded-md transition-[color,background-color,opacity,scale] duration-150 shrink-0",
@@ -527,16 +449,6 @@ export const InputArea = memo(function InputArea({
             </button>
           )}
         </div>
-
-        {menuOpen && (
-          <CompletionMenu
-            menuId={COMPLETION_MENU_ID}
-            items={menuItems}
-            activeIndex={menuIndex}
-            onSelect={selectMenuItem}
-            onHighlight={setActiveIndex}
-          />
-        )}
 
         {dragging && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-accent/5 pointer-events-none z-10">

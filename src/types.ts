@@ -1,4 +1,4 @@
-import type { CSSProperties, Dispatch, SetStateAction } from "react";
+import type { CSSProperties } from "react";
 
 export type Theme = "light" | "dark" | "system";
 export type ReasoningEffort =
@@ -159,11 +159,24 @@ interface AttachedTextFile {
   name: string;
 }
 
-/** File attached in the input area, pending send. */
+/** File attached in the input area, pending send (upload / drag / paste). */
 export type AttachedFile =
   | AttachedImageFile
   | AttachedDocumentFile
   | AttachedTextFile;
+
+/** Workspace file referenced inline via the composer's @ pill. */
+export interface WorkspaceFileReference {
+  path: string;
+  name: string;
+  kind: "text" | "image" | "document";
+}
+
+/** What the composer hands over on submit. */
+export interface ComposerSubmission {
+  text: string;
+  workspaceFiles: WorkspaceFileReference[];
+}
 
 export interface MessageMeta {
   total_tokens?: number;
@@ -388,7 +401,5 @@ export interface ThemeContextValue {
   resolvedTheme: Exclude<Theme, "system">;
   setTheme: (theme: Theme) => void;
 }
-
-export type SetString = Dispatch<SetStateAction<string>>;
 
 export type InlineStyle = CSSProperties;

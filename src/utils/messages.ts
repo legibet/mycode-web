@@ -14,6 +14,7 @@ import type {
   ToolResultBlock,
   ToolRuntime,
   ToolUseBlock,
+  WorkspaceFileReference,
 } from "../types";
 import { isCompactMarker } from "../types";
 
@@ -142,6 +143,22 @@ function createAttachmentBlock(attachment: AttachedFile): MessageBlock {
   return createAttachedTextBlock(attachment.text, attachment.name);
 }
 
+/**
+ * Optimistic block for an inline @ workspace reference. Only the server has
+ * the bytes, so text renders as an empty `<file>` snapshot and image/PDF as
+ * empty-data blocks that the bubble shows as file cards; a session reload
+ * replaces them with the server-persisted real blocks.
+ */
+function createWorkspaceRefBlock(ref: WorkspaceFileReference): MessageBlock {
+  if (ref.kind === "image") {
+    return createImageBlock("", "", ref.name);
+  }
+  if (ref.kind === "document") {
+    return createDocumentBlock("", "application/pdf", ref.name);
+  }
+  return createAttachedTextBlock("", ref.path);
+}
+
 export function createUserTextMessage(text: string): ChatMessage {
   return createMessage("user", text ? [createTextBlock(text)] : []);
 }
@@ -149,9 +166,13 @@ export function createUserTextMessage(text: string): ChatMessage {
 export function createUserMessage(
   text: string,
   attachments: AttachedFile[],
+  workspaceFiles: WorkspaceFileReference[] = [],
 ): ChatMessage {
   const blocks: MessageBlock[] = [];
   if (text) blocks.push(createTextBlock(text));
+  for (const ref of workspaceFiles) {
+    blocks.push(createWorkspaceRefBlock(ref));
+  }
   for (const attachment of attachments) {
     blocks.push(createAttachmentBlock(attachment));
   }

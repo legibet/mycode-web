@@ -229,6 +229,21 @@ function ContextStats({
   );
 }
 
+/** Attachment card in a user bubble: a labelled file reference. */
+function FileCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-32 max-w-xs rounded-lg border border-border/40 bg-muted/50 px-3 py-2 text-sm text-foreground/80">
+      <div className="flex items-center gap-2">
+        <FileText className="size-4 shrink-0 text-accent/80" />
+        <span className="font-medium">{label}</span>
+      </div>
+      <div className="mt-1 break-all text-xs text-muted-foreground">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export const MessageBubble = memo(function MessageBubble({
   role,
   blocks,
@@ -405,31 +420,33 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="max-w-[85%] flex flex-col gap-1.5 items-end">
           {imageBlocks.length > 0 && (
             <div className="flex flex-wrap gap-2 justify-end">
-              {imageBlocks.map((block) => (
-                <img
-                  key={block.renderKey}
-                  src={`data:${block.mime_type};base64,${block.data}`}
-                  alt={block.name ?? "Image"}
-                  className="max-h-64 max-w-full rounded-lg"
-                />
-              ))}
+              {imageBlocks.map((block) =>
+                block.data ? (
+                  <img
+                    key={block.renderKey}
+                    src={`data:${block.mime_type};base64,${block.data}`}
+                    alt={block.name ?? "Image"}
+                    className="max-h-64 max-w-full rounded-lg"
+                  />
+                ) : (
+                  // Workspace image before send: no bytes locally, show a card.
+                  <FileCard
+                    key={block.renderKey}
+                    label="Image"
+                    value={block.name ?? "image"}
+                  />
+                ),
+              )}
             </div>
           )}
           {documentBlocks.length > 0 && (
             <div className="flex flex-wrap gap-2 justify-end">
               {documentBlocks.map((block) => (
-                <div
+                <FileCard
                   key={block.renderKey}
-                  className="min-w-32 max-w-xs rounded-lg border border-border/40 bg-muted/50 px-3 py-2 text-sm text-foreground/80"
-                >
-                  <div className="flex items-center gap-2">
-                    <FileText className="size-4 shrink-0 text-accent/80" />
-                    <span className="font-medium">PDF</span>
-                  </div>
-                  <div className="mt-1 break-all text-xs text-muted-foreground">
-                    {block.name ?? "document.pdf"}
-                  </div>
-                </div>
+                  label="PDF"
+                  value={block.name ?? "document.pdf"}
+                />
               ))}
             </div>
           )}
@@ -438,18 +455,11 @@ export const MessageBubble = memo(function MessageBubble({
               {textAttachmentBlocks.map((block) => {
                 const path = getAttachmentMeta(block)?.path;
                 return (
-                  <div
+                  <FileCard
                     key={block.renderKey}
-                    className="min-w-32 max-w-xs rounded-lg border border-border/40 bg-muted/50 px-3 py-2 text-sm text-foreground/80"
-                  >
-                    <div className="flex items-center gap-2">
-                      <FileText className="size-4 shrink-0 text-accent/80" />
-                      <span className="font-medium">Text</span>
-                    </div>
-                    <div className="mt-1 break-all text-xs text-muted-foreground">
-                      {typeof path === "string" ? path : "attached-file"}
-                    </div>
-                  </div>
+                    label="Text"
+                    value={typeof path === "string" ? path : "attached-file"}
+                  />
                 );
               })}
             </div>

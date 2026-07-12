@@ -17,6 +17,7 @@ import type {
   ChatErrorResponse,
   ChatMessage,
   ChatResponse,
+  ComposerSubmission,
   LocalConfig,
   MessageMeta,
   PermissionRequest,
@@ -26,6 +27,7 @@ import type {
   SessionsResponse,
   StreamEvent,
   ToolRuntime,
+  WorkspaceFileReference,
 } from "../types";
 import { randomId } from "../utils/id";
 import {
@@ -69,7 +71,12 @@ type ChatAction =
       replayEvents?: StreamEvent[];
       expectedSessionId?: string | null;
     }
-  | { type: "start_turn"; content: string; attachments?: AttachedFile[] }
+  | {
+      type: "start_turn";
+      content: string;
+      attachments?: AttachedFile[];
+      workspaceFiles?: WorkspaceFileReference[];
+    }
   | { type: "rewind_and_start_turn"; rewindTo: number; content: string }
   | { type: "apply_event"; event: StreamEvent }
   | { type: "rollback" };
@@ -108,6 +115,61 @@ function createDraftSession(): SessionSummary {
   return { id: randomId(), title: DEFAULT_SESSION_TITLE, isDraft: true };
 }
 
+/** Map a pending upload attachment to a /api/chat input block. */
+function attachmentToInputBlock(
+  attachment: AttachedFile,
+): Record<string, unknown> {
+  if (attachment.kind === "text") {
+    return {
+      type: "text",
+      text: attachment.text,
+      name: attachment.name,
+      is_attachment: true,
+    };
+  }
+  return {
+    type: attachment.kind === "image" ? "image" : "document",
+    data: attachment.data,
+    mime_type: attachment.mime_type,
+    name: attachment.name,
+  };
+}
+
+/** Map an inline @ workspace reference to a /api/chat path input block. */
+function workspaceRefToInputBlock(
+  ref: WorkspaceFileReference,
+): Record<string, unknown> {
+  if (ref.kind === "text") {
+    // Server reads the file into the same <file> snapshot as CLI @file;
+    // the path doubles as the display name.
+    return {
+      type: "text",
+      path: ref.path,
+      name: ref.path,
+      is_attachment: true,
+    };
+  }
+  return {
+    type: ref.kind,
+    path: ref.path,
+    name: ref.name,
+    is_attachment: true,
+  };
+}
+
+/** Drop duplicate @ references so a file only enters the context once. */
+function dedupeWorkspaceFiles(
+  refs: WorkspaceFileReference[],
+): WorkspaceFileReference[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.kind}:${ref.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case "set_messages": {
@@ -133,19 +195,22 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     case "start_turn": {
-      const { content, attachments } = action;
+      const { content, attachments, workspaceFiles } = action;
       // PDFs can be large enough to freeze history rendering after a failed send.
       const uiAttachments = attachments?.map((attachment) =>
         attachment.kind === "document"
           ? { ...attachment, data: "" }
           : attachment,
       );
+      const hasBlocks = Boolean(
+        uiAttachments?.length || workspaceFiles?.length,
+      );
       return {
         ...state,
         rawMessages: [
           ...state.rawMessages,
-          uiAttachments?.length
-            ? createUserMessage(content, uiAttachments)
+          hasBlocks
+            ? createUserMessage(content, uiAttachments ?? [], workspaceFiles)
             : createUserTextMessage(content),
           createAssistantMessage([]),
         ],
@@ -611,9 +676,14 @@ export function useChat(config: LocalConfig) {
   }, [loadSession]);
 
   const send = useCallback(
-    async (input: string, attachments?: AttachedFile[]) => {
-      const content = input.trim();
-      if ((!content && !attachments?.length) || loading) return;
+    async (submission: ComposerSubmission, attachments?: AttachedFile[]) => {
+      const content = submission.text.trim();
+      const workspaceFiles = dedupeWorkspaceFiles(submission.workspaceFiles);
+      if (
+        (!content && !attachments?.length && !workspaceFiles.length) ||
+        loading
+      )
+        return false;
 
       const sessionId = activeSession.id;
       const requestCwd = config.cwd;
@@ -626,6 +696,7 @@ export function useChat(config: LocalConfig) {
         type: "start_turn",
         content,
         ...(attachments?.length ? { attachments } : {}),
+        ...(workspaceFiles.length ? { workspaceFiles } : {}),
       });
       setLoading(true);
 
@@ -640,30 +711,18 @@ export function useChat(config: LocalConfig) {
             : undefined,
       };
 
-      // Use structured `input` blocks when attachments are present.
-      const body = attachments?.length
-        ? {
-            ...commonFields,
-            input: [
-              ...(content ? [{ type: "text", text: content }] : []),
-              ...attachments.map((attachment) =>
-                attachment.kind === "text"
-                  ? {
-                      type: "text",
-                      text: attachment.text,
-                      name: attachment.name,
-                      is_attachment: true,
-                    }
-                  : {
-                      type: attachment.kind === "image" ? "image" : "document",
-                      data: attachment.data,
-                      mime_type: attachment.mime_type,
-                      name: attachment.name,
-                    },
-              ),
-            ],
-          }
-        : { ...commonFields, message: content };
+      // Use structured `input` blocks when any attachment is present.
+      const body =
+        attachments?.length || workspaceFiles.length
+          ? {
+              ...commonFields,
+              input: [
+                ...(content ? [{ type: "text", text: content }] : []),
+                ...workspaceFiles.map(workspaceRefToInputBlock),
+                ...(attachments ?? []).map(attachmentToInputBlock),
+              ],
+            }
+          : { ...commonFields, message: content };
 
       try {
         const res = await fetch("/api/chat", {
@@ -691,7 +750,7 @@ export function useChat(config: LocalConfig) {
               dispatch({ type: "rollback" });
               streamRun(existingRun, sessionId, existingRun.last_seq || 0);
             }
-            return;
+            return false;
           }
           throw new Error(getMessageFromDetail(detail, "Failed to start task"));
         }
@@ -699,7 +758,7 @@ export function useChat(config: LocalConfig) {
         pendingRequestTokenRef.current = 0;
 
         if (!isCurrentRequest) {
-          return;
+          return false;
         }
 
         const chatData = data as ChatResponse;
@@ -715,6 +774,7 @@ export function useChat(config: LocalConfig) {
         fetchSessions();
 
         streamRun(chatData.run, sessionId, 0);
+        return true;
       } catch (e) {
         if (
           pendingRequestTokenRef.current === requestToken &&
@@ -722,11 +782,13 @@ export function useChat(config: LocalConfig) {
         ) {
           pendingRequestTokenRef.current = 0;
           setLoading(false);
+          dispatch({ type: "rollback" });
           dispatch({
             type: "apply_event",
             event: { type: "error", message: getErrorMessage(e) },
           });
         }
+        return false;
       }
     },
     [

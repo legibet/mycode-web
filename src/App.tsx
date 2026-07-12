@@ -26,6 +26,7 @@ import { ThemeProvider } from "./components/ThemeProvider";
 import { useChat } from "./hooks/useChat";
 import type {
   AttachedFile,
+  ComposerSubmission,
   LocalConfig,
   RemoteConfig,
   SettingsResponse,
@@ -124,7 +125,6 @@ function subscribeToWindowResize(onChange: () => void) {
 
 function AppContent() {
   const [localConfig, setLocalConfig] = useState<LocalConfig>(loadConfig);
-  const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [cwdHistory, setCwdHistory] = useState<string[]>(loadHistory);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -233,11 +233,18 @@ function AppContent() {
     });
   }, []);
 
-  const handleSend = useCallback(() => {
-    send(input, attachments.length ? attachments : undefined);
-    setInput("");
-    clearAttachments();
-  }, [attachments, clearAttachments, input, send]);
+  const handleSubmit = useCallback(
+    async (submission: ComposerSubmission) => {
+      const accepted = await send(
+        submission,
+        attachments.length ? attachments : undefined,
+      );
+      if (!accepted) return false;
+      clearAttachments();
+      return true;
+    },
+    [attachments, clearAttachments, send],
+  );
 
   const handleAttachFiles = useCallback((newFiles: AttachedFile[]) => {
     setAttachments((prev) => [...prev, ...newFiles]);
@@ -408,10 +415,9 @@ function AppContent() {
               />
             )}
             <InputArea
-              input={input}
-              setInput={setInput}
+              key={config.cwd}
               loading={loading}
-              onSend={handleSend}
+              onSubmit={handleSubmit}
               onCancel={cancel}
               supportsImages={supportsImageInput}
               supportsDocuments={supportsPdfInput}

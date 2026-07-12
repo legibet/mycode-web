@@ -130,7 +130,7 @@ describe("useChat", () => {
       expect(result.current.sessionLoading).toBe(false);
     });
 
-    await result.current.send("check this", [
+    await result.current.send({ text: "check this", workspaceFiles: [] }, [
       { id: "file-1", kind: "text", name: "main.py", text: 'print("ok")' },
     ]);
 
@@ -151,6 +151,55 @@ describe("useChat", () => {
         },
       ],
     });
+  });
+
+  it("sends inline workspace references as path blocks, deduplicated", async () => {
+    const fetchMock = mockFetch({
+      "/api/sessions?cwd=": createJsonResponse({ sessions: [] }),
+      "/api/chat": createJsonResponse({
+        run: {
+          id: "run-1",
+          session_id: "draft-1",
+          status: "running",
+          last_seq: 0,
+        },
+        session: { id: "draft-1", title: "Draft" },
+      }),
+      "/api/runs/run-1/stream?after=0": new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    });
+
+    const { result } = renderChatHook({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionLoading).toBe(false);
+    });
+
+    await result.current.send({
+      text: "compare @src/a.ts and @src/a.ts with @logo.png",
+      workspaceFiles: [
+        { path: "src/a.ts", name: "a.ts", kind: "text" },
+        { path: "src/a.ts", name: "a.ts", kind: "text" },
+        { path: "logo.png", name: "logo.png", kind: "image" },
+      ],
+    });
+
+    const chatCall = fetchMock.mock.calls.find(([url]) => url === "/api/chat");
+    expect(JSON.parse(String(chatCall?.[1]?.body)).input).toEqual([
+      { type: "text", text: "compare @src/a.ts and @src/a.ts with @logo.png" },
+      { type: "text", path: "src/a.ts", name: "src/a.ts", is_attachment: true },
+      {
+        type: "image",
+        path: "logo.png",
+        name: "logo.png",
+        is_attachment: true,
+      },
+    ]);
   });
 
   it("sends document data without keeping it in UI messages", async () => {
@@ -180,7 +229,7 @@ describe("useChat", () => {
       expect(result.current.sessionLoading).toBe(false);
     });
 
-    await result.current.send("summarize", [
+    await result.current.send({ text: "summarize", workspaceFiles: [] }, [
       {
         id: "file-1",
         kind: "document",

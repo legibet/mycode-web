@@ -31,7 +31,10 @@ web/src/
       MessageList.tsx      # scrollable message history
       MessageBubble.tsx    # single message, role-based styling
       CompactMarker.tsx    # inline divider rendered for `compact` markers
-      InputArea.tsx        # user input, image attachment, submit
+      InputArea.tsx        # upload attachments, drag-and-drop, bottom action row
+      Composer.tsx         # Lexical plain-text editor: slash/@ completion, @file pills
+      WorkspaceFileNode.ts # atomic @path token node (Lexical TextNode, token mode)
+      CompletionMenu.tsx   # listbox above the composer (slash commands + @ files)
       ToolCard.tsx         # tool execution block (start/output/done)
       ReasoningBlock.tsx   # thinking block — expanded while streaming, collapses after
       MarkdownBlock.tsx    # markdown rendering
@@ -115,12 +118,14 @@ Streaming state tracking:
 - `pendingRequestTokenRef` — deduplicates concurrent send requests
 - `activeRunRef` — tracks the current run for cancel
 
-Attachments:
+Composer and attachments:
 
-- `InputArea` always shows the attachment button and supports file picker and drag-and-drop
-- UTF-8 text/code/config files are attached as the same text snapshot format used by CLI `@file`
-- Images and PDFs are sent as structured `input` blocks
-- The attachment button uses `image_input_models` and `pdf_input_models`; unsupported pending attachments are cleared on model switch
+- `Composer` (Lexical) is the single source of truth for message text + inline `@` refs; submit hands `useChat.send` a `ComposerSubmission = { text, workspaceFiles }` and `useChat` builds the `input` blocks (workspace refs deduped by `kind + path`, uploads appended).
+- `WorkspaceFileNode` pills serialize as `@path` inside the message text; the file content travels separately as a `path` input block — both must stay consistent with the CLI `@file` behavior.
+- Slash commands only match a whole-input token; unknown slashes send as plain text. Slash is disabled while a run streams or uploads are pending.
+- `@` completion needs `GET /api/workspaces/files`; a 404 backend degrades to a quiet "not supported" footer. Refs the model can't ingest block submit with a hint — never silently drop a pill (it would break the sentence).
+- Optimistic workspace refs render as empty-data file cards; after reload the server-persisted blocks render instead (workspace image: card live, real preview after reload — intentional).
+- Upload attachments (picker/drag/paste) stay in `InputArea`: text as inline snapshot blocks, media as base64 blocks, pruned on model switch via `image_input_models` / `pdf_input_models`.
 
 ## Config Persistence
 
