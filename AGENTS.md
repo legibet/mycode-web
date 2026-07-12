@@ -125,7 +125,7 @@ Composer and attachments:
 - Slash commands only match a whole-input token; unknown slashes send as plain text. Slash is disabled while a run streams or uploads are pending.
 - `@` completion needs `GET /api/workspaces/files`; a 404 backend degrades to a quiet "not supported" footer. Refs the model can't ingest block submit with a hint — never silently drop a pill (it would break the sentence).
 - Optimistic workspace refs render as empty-data file cards; after reload the server-persisted blocks render instead (workspace image: card live, real preview after reload — intentional).
-- Upload attachments (picker/drag/paste) stay in `InputArea`: text as inline snapshot blocks, media as base64 blocks, pruned on model switch via `image_input_models` / `pdf_input_models`.
+- Upload attachments (picker/drag/paste) stay in `InputArea`: text as inline snapshot blocks and media as base64 blocks. Unsupported additions briefly replace the effort pill with a compact toolbar notice; attachments already in the draft survive model changes and block submit with a persistent notice until removed or supported again, matching inline `@` refs.
 
 ## Config Persistence
 

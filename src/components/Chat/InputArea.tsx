@@ -4,12 +4,20 @@
  * the upload strip, drag-and-drop, and the bottom action row.
  */
 
-import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
+import {
+  ArrowUp,
+  CircleAlert,
+  FileText,
+  Paperclip,
+  Square,
+  X,
+} from "lucide-react";
 import {
   type ChangeEvent,
   type DragEvent,
   memo,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -111,6 +119,11 @@ interface InputAreaProps {
   disabled?: boolean | undefined;
 }
 
+interface InputNotice {
+  kind: "image" | "document" | "mixed";
+  blocking: boolean;
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -139,11 +152,18 @@ async function processFiles(
     supportsImages,
     supportsDocuments,
   }: { supportsImages: boolean; supportsDocuments: boolean },
-): Promise<AttachedFile[]> {
+): Promise<{
+  attachments: AttachedFile[];
+  unsupported: Array<"image" | "document">;
+}> {
+  const unsupported = new Set<"image" | "document">();
   const attachedFiles = await Promise.all(
     files.map(async (file) => {
       if (file.type.startsWith("image/")) {
-        if (!supportsImages) return null;
+        if (!supportsImages) {
+          unsupported.add("image");
+          return null;
+        }
         return {
           id: randomId(),
           kind: "image" as const,
@@ -158,7 +178,10 @@ async function processFiles(
         file.type === "application/pdf" ||
         file.name.toLowerCase().endsWith(".pdf");
       if (isPdfFile) {
-        if (!supportsDocuments) return null;
+        if (!supportsDocuments) {
+          unsupported.add("document");
+          return null;
+        }
         return {
           id: randomId(),
           kind: "document" as const,
@@ -178,7 +201,10 @@ async function processFiles(
       };
     }),
   );
-  return attachedFiles.filter((file) => file !== null);
+  return {
+    attachments: attachedFiles.filter((file) => file !== null),
+    unsupported: [...unsupported],
+  };
 }
 
 export const InputArea = memo(function InputArea({
@@ -199,12 +225,41 @@ export const InputArea = memo(function InputArea({
 }: InputAreaProps) {
   const composerRef = useRef<ComposerHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const [hasContent, setHasContent] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [inputNotice, setInputNotice] = useState<InputNotice | null>(null);
 
   const disabled = disabledProp || Boolean(disabledReason);
+  const hasImageUpload = files.some((file) => file.kind === "image");
+  const hasDocumentUpload = files.some((file) => file.kind === "document");
+
+  const showInputNotice = useCallback(
+    (notice: InputNotice | null, timeoutMs?: number) => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+        noticeTimerRef.current = null;
+      }
+      setInputNotice(notice);
+      if (notice && timeoutMs) {
+        noticeTimerRef.current = window.setTimeout(() => {
+          setInputNotice(null);
+          noticeTimerRef.current = null;
+        }, timeoutMs);
+      }
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    },
+    [],
+  );
 
   // Composer calls this on Enter; the send button routes through the same path.
   const handleSubmission = useCallback(
@@ -217,49 +272,90 @@ export const InputArea = memo(function InputArea({
       ) {
         return false;
       }
-      // Inline references the current model can't ingest block the send
-      // instead of being silently dropped (that would break the sentence).
-      const blockedKind = submission.workspaceFiles.find(
-        (ref) =>
-          (ref.kind === "image" && !supportsImages) ||
-          (ref.kind === "document" && !supportsDocuments),
-      )?.kind;
-      if (blockedKind) {
-        setSubmitError(
-          `Current model does not support ${
-            blockedKind === "image" ? "image" : "PDF"
-          } input — remove the reference or switch model.`,
-        );
+      const unsupportedImage =
+        !supportsImages &&
+        (hasImageUpload ||
+          submission.workspaceFiles.some((ref) => ref.kind === "image"));
+      const unsupportedDocument =
+        !supportsDocuments &&
+        (hasDocumentUpload ||
+          submission.workspaceFiles.some((ref) => ref.kind === "document"));
+      if (unsupportedImage || unsupportedDocument) {
+        showInputNotice({
+          kind:
+            unsupportedImage && unsupportedDocument
+              ? "mixed"
+              : unsupportedImage
+                ? "image"
+                : "document",
+          blocking: true,
+        });
         return false;
       }
-      setSubmitError(null);
+      showInputNotice(null);
       return onSubmit(submission);
     },
     [
       loading,
       disabled,
       files.length,
+      hasImageUpload,
+      hasDocumentUpload,
       supportsImages,
       supportsDocuments,
       onSubmit,
+      showInputNotice,
     ],
   );
 
-  const handleHasContentChange = useCallback((next: boolean) => {
-    setHasContent(next);
-    setSubmitError(null);
-  }, []);
+  const handleHasContentChange = useCallback(
+    (next: boolean) => {
+      setHasContent(next);
+      showInputNotice(null);
+    },
+    [showInputNotice],
+  );
+
+  const handleConfigUpdate = useCallback(
+    (next: LocalConfig) => {
+      showInputNotice(null);
+      onUpdateConfig(next);
+    },
+    [onUpdateConfig, showInputNotice],
+  );
 
   const attachFiles = useCallback(
     async (incoming: File[]) => {
       if (disabled) return;
-      const nextFiles = await processFiles(incoming, {
+      const result = await processFiles(incoming, {
         supportsImages,
         supportsDocuments,
       });
-      if (nextFiles.length) onAttachFiles?.(nextFiles);
+      if (result.unsupported.length) {
+        showInputNotice(
+          {
+            kind:
+              result.unsupported.length > 1
+                ? "mixed"
+                : result.unsupported.includes("image")
+                  ? "image"
+                  : "document",
+            blocking: false,
+          },
+          2500,
+        );
+      } else {
+        showInputNotice(null);
+      }
+      if (result.attachments.length) onAttachFiles?.(result.attachments);
     },
-    [disabled, onAttachFiles, supportsDocuments, supportsImages],
+    [
+      disabled,
+      onAttachFiles,
+      showInputNotice,
+      supportsDocuments,
+      supportsImages,
+    ],
   );
 
   const handlePasteFiles = useCallback(
@@ -302,6 +398,18 @@ export const InputArea = memo(function InputArea({
   };
 
   const hasInput = hasContent || files.length > 0;
+  const noticeLabel =
+    inputNotice?.kind === "mixed"
+      ? "Attachments"
+      : inputNotice?.kind === "image"
+        ? "Image"
+        : "PDF";
+  const compactNoticeText = inputNotice ? `${noticeLabel} unsupported` : "";
+  const noticeText = inputNotice?.blocking
+    ? inputNotice.kind === "mixed"
+      ? "Remove attachments or switch model"
+      : `Remove ${inputNotice.kind === "image" ? "image" : "PDF"} or switch model`
+    : compactNoticeText;
   const accept = [
     TEXT_FILE_ACCEPT,
     supportsImages ? "image/*" : null,
@@ -325,9 +433,9 @@ export const InputArea = memo(function InputArea({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {(disabledReason || submitError) && (
+        {disabledReason && (
           <div className="border-b border-border/30 px-3.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
-            {disabledReason || submitError}
+            {disabledReason}
           </div>
         )}
 
@@ -354,7 +462,10 @@ export const InputArea = memo(function InputArea({
                 )}
                 <button
                   type="button"
-                  onClick={() => onRemoveFile?.(file.id)}
+                  onClick={() => {
+                    showInputNotice(null);
+                    onRemoveFile?.(file.id);
+                  }}
                   aria-label={`Remove ${file.name}`}
                   className="absolute -top-1 -right-1 size-4 bg-foreground text-background rounded-full flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 max-md:opacity-100 transition-opacity"
                 >
@@ -409,16 +520,44 @@ export const InputArea = memo(function InputArea({
           </button>
 
           <div className="flex items-center gap-0.5 min-w-0 flex-1 overflow-hidden">
-            <ModelTrigger
-              config={config}
-              remoteConfig={remoteConfig}
-              onUpdateConfig={onUpdateConfig}
-            />
-            <EffortTrigger
-              config={config}
-              remoteConfig={remoteConfig}
-              onUpdateConfig={onUpdateConfig}
-            />
+            <div
+              className={cn(
+                "min-w-0",
+                inputNotice && "max-w-[45%] max-md:max-w-24",
+              )}
+            >
+              <ModelTrigger
+                config={config}
+                remoteConfig={remoteConfig}
+                onUpdateConfig={handleConfigUpdate}
+              />
+            </div>
+            {inputNotice ? (
+              <div
+                role="status"
+                aria-live="polite"
+                title={noticeText}
+                className="flex min-w-0 flex-1 items-center gap-1 px-1.5 text-[12px] leading-4 text-destructive/80"
+              >
+                <CircleAlert className="size-3 shrink-0" />
+                {inputNotice.blocking ? (
+                  <>
+                    <span className="truncate max-md:hidden">{noticeText}</span>
+                    <span className="hidden truncate max-md:inline">
+                      {compactNoticeText}
+                    </span>
+                  </>
+                ) : (
+                  <span className="truncate">{compactNoticeText}</span>
+                )}
+              </div>
+            ) : (
+              <EffortTrigger
+                config={config}
+                remoteConfig={remoteConfig}
+                onUpdateConfig={handleConfigUpdate}
+              />
+            )}
           </div>
 
           {loading ? (

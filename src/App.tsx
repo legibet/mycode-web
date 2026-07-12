@@ -4,13 +4,7 @@
  * Mobile: sidebar as overlay, top header bar.
  */
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -79,34 +73,6 @@ function modelSupports(
       info?.supports_pdf_input && info.pdf_input_models?.includes(m),
     ),
   };
-}
-
-function pruneAttachments(
-  prev: AttachedFile[],
-  supportsImage: boolean,
-  supportsPdf: boolean,
-): AttachedFile[] {
-  const next: AttachedFile[] = [];
-  let changed = false;
-
-  for (const attachment of prev) {
-    const keep =
-      attachment.kind === "text" ||
-      (attachment.kind === "image" && supportsImage) ||
-      (attachment.kind === "document" && supportsPdf);
-
-    if (keep) {
-      next.push(attachment);
-      continue;
-    }
-
-    changed = true;
-    if (attachment.kind === "image") {
-      URL.revokeObjectURL(attachment.preview);
-    }
-  }
-
-  return changed ? next : prev;
 }
 
 function settingsPanelKey(open: boolean, settings: SettingsResponse | null) {
@@ -286,17 +252,6 @@ function AppContent() {
       </p>
     )
   ) : undefined;
-
-  // Side effect (not derived state): drop already-attached files the active
-  // model can no longer accept and revoke their object URLs. Listening on the
-  // capability flags catches both user-initiated model swaps and indirect
-  // changes (cwd switch refetching /api/config, normalizeConfigWithRemoteDefaults
-  // bumping us to a different default model, etc.).
-  useEffect(() => {
-    setAttachments((prev) =>
-      pruneAttachments(prev, supportsImageInput, supportsPdfInput),
-    );
-  }, [supportsImageInput, supportsPdfInput]);
 
   const handleSelectSession = useCallback(
     (id: string) => {
