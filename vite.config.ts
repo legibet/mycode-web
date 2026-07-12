@@ -19,6 +19,20 @@ export default {
       "shiki/langs",
     ],
   },
+  build: {
+    rolldownOptions: {
+      onLog(level, log, handler) {
+        const file = log.id ?? log.loc?.file;
+        if (
+          log.code === "INVALID_ANNOTATION" &&
+          file?.includes("/node_modules/.pnpm/@lexical+react@")
+        ) {
+          return;
+        }
+        handler(level, log);
+      },
+    },
+  },
   server: {
     proxy: {
       "/api": "http://localhost:8000",
