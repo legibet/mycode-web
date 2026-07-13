@@ -61,7 +61,7 @@ export function CompletionMenu({
             aria-selected={index === activeIndex}
             aria-disabled={item.disabled || undefined}
             className={cn(
-              "flex cursor-pointer items-baseline gap-2 rounded-sm px-2 py-1.5 select-none",
+              "grid cursor-pointer grid-cols-[8rem_minmax(0,1fr)] items-baseline gap-2 rounded-sm px-2 py-1.5 select-none md:grid-cols-[12rem_minmax(0,1fr)]",
               index === activeIndex && "bg-muted",
               item.disabled && "cursor-default opacity-50",
             )}
@@ -72,11 +72,11 @@ export function CompletionMenu({
             onClick={() => onSelect(index)}
             onPointerMove={() => onHighlight(index)}
           >
-            <span className="min-w-0 truncate font-mono text-[13px] text-foreground">
+            <span className="truncate font-mono text-[13px] text-foreground">
               {item.label}
             </span>
             {item.hint && (
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+              <span className="max-w-xl truncate text-left text-xs text-muted-foreground">
                 {item.hint}
               </span>
             )}

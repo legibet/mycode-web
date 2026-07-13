@@ -32,9 +32,9 @@ web/src/
       MessageBubble.tsx    # single message, role-based styling
       CompactMarker.tsx    # inline divider rendered for `compact` markers
       InputArea.tsx        # upload attachments, drag-and-drop, bottom action row
-      Composer.tsx         # Lexical plain-text editor: slash/@ completion, @file pills
+      Composer.tsx         # Lexical editor: built-in slash, inline skill/@ completion, @file pills
       WorkspaceFileNode.ts # atomic @path token node (Lexical TextNode, token mode)
-      CompletionMenu.tsx   # listbox above the composer (slash commands + @ files)
+      CompletionMenu.tsx   # listbox above the composer (commands + skills + @ files)
       ToolCard.tsx         # tool execution block (start/output/done)
       ReasoningBlock.tsx   # thinking block — expanded while streaming, collapses after
       MarkdownBlock.tsx    # markdown rendering
@@ -122,7 +122,8 @@ Composer and attachments:
 
 - `Composer` (Lexical) is the single source of truth for message text + inline `@` refs; submit hands `useChat.send` a `ComposerSubmission = { text, workspaceFiles }` and `useChat` builds the `input` blocks (workspace refs deduped by `kind + path`, uploads appended).
 - `WorkspaceFileNode` pills serialize as `@path` inside the message text; the file content travels separately as a `path` input block — both must stay consistent with the CLI `@file` behavior.
-- Slash commands only match a whole-input token; unknown slashes send as plain text. Slash is disabled while a run streams or uploads are pending.
+- Built-in slash commands match a whole-input token while the composer is idle with an empty upload list. Skills from `GET /api/config` complete as editable `/<skill-name>` text at any standalone slash token. The backend expands exact discovered names; other slash tokens are submitted as text.
+- Skill snapshot text blocks (`meta.skill_snapshot=true`) remain in `rawMessages` for provider replay. `buildRenderMessages()` gives history, copy, and edit the original user text.
 - `@` completion needs `GET /api/workspaces/files`; a 404 backend degrades to a quiet "not supported" footer. Refs the model can't ingest block submit with a hint — never silently drop a pill (it would break the sentence).
 - Optimistic workspace refs render as empty-data file cards; after reload the server-persisted blocks render instead (workspace image: card live, real preview after reload — intentional).
 - Upload attachments (picker/drag/paste) stay in `InputArea`: text as inline snapshot blocks and media as base64 blocks. Unsupported additions briefly replace the effort pill with a compact toolbar notice; attachments already in the draft survive model changes and block submit with a persistent notice until removed or supported again, matching inline `@` refs.

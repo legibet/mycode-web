@@ -110,6 +110,26 @@ describe("messages", () => {
     ]);
   });
 
+  it("keeps skill snapshots out of rendered user messages", () => {
+    const renderMessages = buildRenderMessages([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<skill>private instructions</skill>",
+            meta: { skill_snapshot: true },
+          },
+          { type: "text", text: "Use /ui here" },
+        ],
+      },
+    ]);
+
+    const content = expectChat(renderMessages[0]).content;
+    expect(content).toHaveLength(1);
+    expect(content[0]).toMatchObject({ type: "text", text: "Use /ui here" });
+  });
+
   it("wraps text attachments like CLI file references", () => {
     const message = createUserMessage("review this", [
       {

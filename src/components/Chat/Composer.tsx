@@ -40,13 +40,15 @@ import {
   useState,
 } from "react";
 import { useWorkspaceFiles } from "../../hooks/useWorkspaceFiles";
-import type { ComposerSubmission } from "../../types";
+import type { ComposerSubmission, SkillInfo } from "../../types";
 import { cn } from "../../utils/cn";
 import {
   type AtQuery,
   dirTokenText,
   matchAtQuery,
+  matchSkillQuery,
   matchSlashCommands,
+  type SkillQuery,
   type SlashCommand,
   type WorkspaceEntry,
 } from "../../utils/completion";
@@ -75,6 +77,7 @@ interface ComposerProps {
   cwd: string;
   supportsImages: boolean;
   supportsDocuments: boolean;
+  skills: SkillInfo[];
   hasUploads: boolean;
   /** Return false to reject the submission (composer keeps its content). */
   onSubmit: (submission: ComposerSubmission) => Promise<boolean>;
@@ -87,21 +90,25 @@ interface ComposerProps {
 interface EditorContext {
   rootText: string;
   atQuery: AtQuery | null;
+  skillQuery: SkillQuery | null;
 }
 
 function $readEditorContext(): EditorContext {
   const rootText = $getRoot().getTextContent();
   const selection = $getSelection();
   let atQuery: AtQuery | null = null;
+  let skillQuery: SkillQuery | null = null;
   if ($isRangeSelection(selection) && selection.isCollapsed()) {
     const anchorNode = selection.anchor.getNode();
     if ($isTextNode(anchorNode) && !$isWorkspaceFileNode(anchorNode)) {
-      atQuery = matchAtQuery(
-        anchorNode.getTextContent().slice(0, selection.anchor.offset),
-      );
+      const textBeforeCursor = anchorNode
+        .getTextContent()
+        .slice(0, selection.anchor.offset);
+      atQuery = matchAtQuery(textBeforeCursor);
+      skillQuery = matchSkillQuery(textBeforeCursor);
     }
   }
-  return { rootText, atQuery };
+  return { rootText, atQuery, skillQuery };
 }
 
 function $buildSubmission(): ComposerSubmission {
@@ -166,6 +173,17 @@ function $completeAtToken(entry: WorkspaceEntry): void {
   space.select(1, 1);
 }
 
+function $completeSkillToken(name: string): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+  const anchorNode = selection.anchor.getNode();
+  if (!$isTextNode(anchorNode) || $isWorkspaceFileNode(anchorNode)) return;
+  const offset = selection.anchor.offset;
+  const query = matchSkillQuery(anchorNode.getTextContent().slice(0, offset));
+  if (!query) return;
+  anchorNode.spliceText(query.start, offset - query.start, `/${name} `, true);
+}
+
 function ComposerInner({
   disabled,
   placeholder,
@@ -173,6 +191,7 @@ function ComposerInner({
   cwd,
   supportsImages,
   supportsDocuments,
+  skills,
   hasUploads,
   onSubmit,
   onSlashCommand,
@@ -186,6 +205,7 @@ function ComposerInner({
   const [context, setContext] = useState<EditorContext>({
     rootText: "",
     atQuery: null,
+    skillQuery: null,
   });
   const [activeIndex, setActiveIndex] = useState(0);
   const submittingRef = useRef(false);
@@ -207,7 +227,9 @@ function ComposerInner({
         prev.rootText === next.rootText &&
         prev.atQuery?.dir === next.atQuery?.dir &&
         prev.atQuery?.prefix === next.atQuery?.prefix &&
-        (prev.atQuery === null) === (next.atQuery === null)
+        (prev.atQuery === null) === (next.atQuery === null) &&
+        prev.skillQuery?.prefix === next.skillQuery?.prefix &&
+        (prev.skillQuery === null) === (next.skillQuery === null)
           ? prev
           : next,
       );
@@ -223,13 +245,23 @@ function ComposerInner({
     [onSlashCommand, loading, disabled, hasUploads, context.rootText],
   );
 
+  const skillCandidates = useMemo(() => {
+    const query = context.skillQuery;
+    if (loading || disabled || !query) return [];
+    return skills.filter((skill) => skill.name.startsWith(query.prefix));
+  }, [context.skillQuery, disabled, loading, skills]);
+
   const confirming =
     confirmingFor !== null && confirmingFor.rootText === context.rootText
       ? confirmingFor.command
       : null;
 
   const atQuery =
-    loading || disabled || slashCandidates.length > 0 || confirming
+    loading ||
+    disabled ||
+    slashCandidates.length > 0 ||
+    skillCandidates.length > 0 ||
+    confirming
       ? null
       : context.atQuery;
   const workspaceFiles = useWorkspaceFiles(
@@ -254,13 +286,20 @@ function ComposerInner({
         ],
       };
     }
-    if (slashCandidates.length > 0) {
+    if (slashCandidates.length > 0 || skillCandidates.length > 0) {
       return {
-        menuItems: slashCandidates.map((command) => ({
-          id: command.name,
-          label: command.name,
-          hint: command.description,
-        })),
+        menuItems: [
+          ...slashCandidates.map((command) => ({
+            id: command.name,
+            label: command.name,
+            hint: command.description,
+          })),
+          ...skillCandidates.map((skill) => ({
+            id: `skill:${skill.name}`,
+            label: `/${skill.name}`,
+            hint: skill.description,
+          })),
+        ],
       };
     }
     if (atQuery) {
@@ -301,6 +340,7 @@ function ComposerInner({
   }, [
     confirming,
     slashCandidates,
+    skillCandidates,
     atQuery,
     workspaceFiles,
     supportsImages,
@@ -354,6 +394,12 @@ function ComposerInner({
       editor.update(() => {
         $getRoot().clear();
       });
+      return;
+    }
+    const skill = skillCandidates[index - slashCandidates.length];
+    if (skill) {
+      editor.update(() => $completeSkillToken(skill.name));
+      setActiveIndex(0);
       return;
     }
     if (atQuery) {

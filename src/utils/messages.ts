@@ -407,6 +407,10 @@ export function buildRenderMessages(
       const toolResults: ToolResultBlock[] = [];
 
       for (const [blockIndex, block] of blocks.entries()) {
+        // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket access
+        if (block?.type === "text" && block.meta?.["skill_snapshot"]) {
+          continue;
+        }
         if (
           (block?.type === "text" && block.text) ||
           block?.type === "image" ||

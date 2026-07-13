@@ -40,6 +40,7 @@ describe("Composer", () => {
         cwd="/workspace"
         supportsImages
         supportsDocuments
+        skills={[]}
         hasUploads={false}
         onSubmit={onSubmit}
         onPasteFiles={() => {}}
@@ -64,5 +65,41 @@ describe("Composer", () => {
     await act(async () => resolveSubmission?.(false));
 
     expect(editor).toHaveTextContent("review @src/main.ts");
+  });
+
+  it("completes a skill inside the message and submits the visible text", async () => {
+    const user = userEvent.setup();
+    const composerRef = createRef<ComposerHandle>();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+
+    render(
+      <Composer
+        ref={composerRef}
+        disabled={false}
+        placeholder="Message…"
+        loading={false}
+        cwd="/workspace"
+        supportsImages
+        supportsDocuments
+        skills={[{ name: "ui", description: "Design user interfaces." }]}
+        hasUploads={false}
+        onSubmit={onSubmit}
+        onPasteFiles={() => {}}
+        onHasContentChange={() => {}}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox");
+    await user.click(editor);
+    await user.paste("Please use /u");
+    await user.click(await screen.findByRole("option", { name: /\/ui/ }));
+    await user.paste("for this page");
+
+    composerRef.current?.submit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit).toHaveBeenCalledWith({
+      text: "Please use /ui for this page",
+      workspaceFiles: [],
+    });
   });
 });

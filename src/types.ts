@@ -33,6 +33,11 @@ export interface ProviderInfo {
   pdf_input_models?: string[];
 }
 
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
 export interface RemoteConfig {
   providers?: Record<string, ProviderInfo>;
   default?: {
@@ -45,6 +50,7 @@ export interface RemoteConfig {
   cwd_exists?: boolean;
   project?: string;
   config_paths?: string[];
+  skills?: SkillInfo[];
   setup_error?: { message: string } | null;
 }
 

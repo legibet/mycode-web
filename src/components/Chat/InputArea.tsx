@@ -26,12 +26,15 @@ import type {
   ComposerSubmission,
   LocalConfig,
   RemoteConfig,
+  SkillInfo,
 } from "../../types";
 import { cn } from "../../utils/cn";
 import type { SlashCommand } from "../../utils/completion";
 import { randomId } from "../../utils/id";
 import { Composer, type ComposerHandle } from "./Composer";
 import { EffortTrigger, ModelTrigger } from "./InputPills";
+
+const EMPTY_SKILLS: SkillInfo[] = [];
 
 // File pickers only understand MIME types and extensions, so keep the text
 // allowlist explicit here.
@@ -494,6 +497,7 @@ export const InputArea = memo(function InputArea({
           cwd={config.cwd}
           supportsImages={supportsImages}
           supportsDocuments={supportsDocuments}
+          skills={remoteConfig?.skills ?? EMPTY_SKILLS}
           hasUploads={files.length > 0}
           onSubmit={handleSubmission}
           onSlashCommand={onSlashCommand}

@@ -1,4 +1,4 @@
-/** Slash command and @path token matching for the composer completion menu. */
+/** Slash command, skill reference, and @path matching for the composer menu. */
 
 export interface SlashCommand {
   name: "/new" | "/clear";
@@ -21,6 +21,20 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
 export function matchSlashCommands(input: string): SlashCommand[] {
   if (!/^\/\S*$/.test(input)) return [];
   return SLASH_COMMANDS.filter((command) => command.name.startsWith(input));
+}
+
+const SKILL_TOKEN_RE = /(?<!\S)\/([a-zA-Z0-9_-]*)$/;
+
+export interface SkillQuery {
+  prefix: string;
+  start: number;
+}
+
+/** Parse a standalone `/skill-name` token immediately before the cursor. */
+export function matchSkillQuery(textBeforeCursor: string): SkillQuery | null {
+  const match = SKILL_TOKEN_RE.exec(textBeforeCursor);
+  if (!match) return null;
+  return { prefix: match[1] ?? "", start: match.index };
 }
 
 // A standalone `@token` at the cursor: bare `@src/co` or double-quoted
