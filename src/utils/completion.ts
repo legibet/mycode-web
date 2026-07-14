@@ -1,7 +1,7 @@
 /** Slash command, skill reference, and @path matching for the composer menu. */
 
 export interface SlashCommand {
-  name: "/new" | "/clear";
+  name: "/new" | "/clear" | "/compact";
   description: string;
   /** Require a second Enter on a confirm row before executing. */
   confirm?: boolean;
@@ -10,6 +10,7 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "/new", description: "New session" },
   { name: "/clear", description: "Clear conversation", confirm: true },
+  { name: "/compact", description: "Compact conversation context" },
 ];
 
 /**

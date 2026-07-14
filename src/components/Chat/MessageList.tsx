@@ -28,6 +28,10 @@ interface MessageListProps {
   sessionId?: string | undefined;
   messages: RenderMessage[];
   loading: boolean;
+  /** A compact run is active; a pending divider pulses at the tail. */
+  compacting: boolean;
+  /** Last compact failure, shown as a quiet inline note at the tail. */
+  compactError: string | null;
   onRewindAndSend?:
     | ((rewindTo: number, input: string) => Promise<void>)
     | undefined;
@@ -38,29 +42,22 @@ export const MessageList = memo(function MessageList({
   sessionId,
   messages,
   loading,
+  compacting,
+  compactError,
   onRewindAndSend,
   emptyStateFooter,
 }: MessageListProps) {
   const sessionKey = sessionId || DRAFT_SESSION_KEY;
-
-  if (messages.length === 0) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
-        <h1 className="font-display text-3xl tracking-[-0.022em] text-foreground/70">
-          mycode
-          <span className="inline-block w-0.5 h-6 bg-accent/60 ml-0.5 align-middle animate-cursor-blink" />
-        </h1>
-        {emptyStateFooter && <div className="mt-8">{emptyStateFooter}</div>}
-      </div>
-    );
-  }
 
   return (
     <WindowedMessages
       key={sessionKey}
       messages={messages}
       loading={loading}
+      compacting={compacting}
+      compactError={compactError}
       onRewindAndSend={onRewindAndSend}
+      emptyStateFooter={emptyStateFooter}
     />
   );
 });
@@ -68,9 +65,12 @@ export const MessageList = memo(function MessageList({
 interface WindowedMessagesProps {
   messages: RenderMessage[];
   loading: boolean;
+  compacting: boolean;
+  compactError: string | null;
   onRewindAndSend?:
     | ((rewindTo: number, input: string) => Promise<void>)
     | undefined;
+  emptyStateFooter?: ReactNode;
 }
 
 function getInitialStartIndex(messageCount: number): number {
@@ -95,11 +95,14 @@ interface PrependSnapshot {
 function WindowedMessages({
   messages,
   loading,
+  compacting,
+  compactError,
   onRewindAndSend,
+  emptyStateFooter,
 }: WindowedMessagesProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const followOutputRef = useRef(true);
-  const previousMessageVersionRef = useRef("");
+  const previousOutputVersionRef = useRef("");
   const prependSnapshot = useRef<PrependSnapshot | null>(null);
   const layoutMeasureFrame = useRef<number | null>(null);
   const [layoutOptimized, setLayoutOptimized] = useState(false);
@@ -115,6 +118,8 @@ function WindowedMessages({
     [effectiveStartIndex, messages],
   );
   const latestMessage = messages.at(-1);
+  const showPendingCompact =
+    compacting && (!latestMessage || !isCompactMarker(latestMessage));
   const latestOutputBlockCount =
     !latestMessage || isCompactMarker(latestMessage)
       ? 0
@@ -126,7 +131,7 @@ function WindowedMessages({
           if (block.type !== "text" && block.type !== "thinking") return total;
           return total + (block.text?.length ?? 0);
         }, 0);
-  const outputVersion = `${messages.length}:${latestOutputBlockCount}:${latestOutputTextLength}`;
+  const outputVersion = `${messages.length}:${latestOutputBlockCount}:${latestOutputTextLength}:${compacting}:${compactError ?? ""}`;
 
   const isNearBottom = useCallback((el: HTMLElement) => {
     return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
@@ -206,8 +211,8 @@ function WindowedMessages({
   }, [layoutOptimized, scrollToBottom]);
 
   useLayoutEffect(() => {
-    if (previousMessageVersionRef.current === outputVersion) return;
-    previousMessageVersionRef.current = outputVersion;
+    if (previousOutputVersionRef.current === outputVersion) return;
+    previousOutputVersionRef.current = outputVersion;
     if (!followOutputRef.current) return;
     if (prependSnapshot.current != null) return;
 
@@ -220,7 +225,16 @@ function WindowedMessages({
       onScroll={handleScroll}
       className="min-h-0 flex-1 overflow-y-auto pb-4 pt-6 [overflow-anchor:none]"
     >
-      <div className="mx-auto max-w-4xl max-md:max-w-none flex flex-col gap-6 max-md:gap-5">
+      <div className="mx-auto flex min-h-full max-w-4xl flex-col gap-6 max-md:max-w-none max-md:gap-5">
+        {messages.length === 0 && (
+          <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
+            <h1 className="font-display text-3xl tracking-[-0.022em] text-foreground/70">
+              mycode
+              <span className="ml-0.5 inline-block h-6 w-0.5 animate-cursor-blink bg-accent/60 align-middle" />
+            </h1>
+            {emptyStateFooter && <div className="mt-8">{emptyStateFooter}</div>}
+          </div>
+        )}
         {visibleMessages.map((message, visibleIndex) => {
           const index = effectiveStartIndex + visibleIndex;
           const renderKey = message.renderKey || `msg-${index}`;
@@ -262,7 +276,28 @@ function WindowedMessages({
             </div>
           );
         })}
-        <div className="h-4" />
+        {/* The freshly-appended marker replaces the pending divider in place. */}
+        {showPendingCompact && (
+          <div className="chat-message-shell">
+            <CompactMarker pending />
+          </div>
+        )}
+        {!compacting && compactError && (
+          <div
+            role="status"
+            title={compactError}
+            className="flex select-none items-center justify-center px-2 py-1"
+          >
+            <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/50">
+              {compactError === "nothing to compact"
+                ? "nothing to compact"
+                : "compaction failed"}
+            </span>
+          </div>
+        )}
+        {(messages.length > 0 || showPendingCompact || compactError) && (
+          <div className="h-4" />
+        )}
       </div>
     </div>
   );

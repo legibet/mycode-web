@@ -117,6 +117,13 @@ Streaming state tracking:
 - `streamTokenRef` — incremented to invalidate stale streams
 - `pendingRequestTokenRef` — deduplicates concurrent send requests
 - `activeRunRef` — tracks the current run for cancel
+- `runKind: "chat" | "compact" | null` — kind of the run being followed; `loading` derives from it, and `MessageList` treats the tail assistant as streaming only for chat runs
+
+Manual compaction (`/compact`):
+
+- `compactSession()` posts `POST /api/sessions/{id}/compact` with the active provider/model and streams the returned `kind: "compact"` run through the normal SSE reader. No optimistic user/assistant message is created; a 409 attaches to the existing run using its `kind`.
+- Compact runs route SSE by kind: only the `compact` event reaches the reducer (appending the marker); an `error` event sets `compactError` and never touches the last assistant message. The same routing applies to `pending_events` replayed after a refresh, and `active_run.kind` restores the `Compacting…` state.
+- Compacting feedback lives in the message area, not the toolbar: while a compact run is active, `MessageList` renders a pending `CompactMarker` (same divider geometry, pulsing `compacting…` label) at the tail, which settles into the real `compacted` divider when the marker arrives. Failures render a quiet inline note (`compaction failed` / `nothing to compact`, full detail in `title`) in the same position from `compactError`, which clears on the next run or session change. The input area only reflects the shared busy state (disabled composer + stop button).
 
 Composer and attachments:
 

@@ -63,9 +63,12 @@ export interface SessionSummary {
   updated_at?: string;
 }
 
+export type RunKind = "chat" | "compact";
+
 export interface RunInfo {
   id: string;
   session_id: string;
+  kind: RunKind;
   status: string;
   last_seq: number;
   error?: string;
@@ -322,6 +325,10 @@ export interface SessionResponse {
 export interface ChatResponse {
   run: RunInfo;
   session: SessionSummary;
+}
+
+export interface CompactResponse {
+  run: RunInfo;
 }
 
 export interface ValidationErrorDetail {

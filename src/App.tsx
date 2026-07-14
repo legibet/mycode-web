@@ -154,11 +154,14 @@ function AppContent() {
     messages,
     messageSessionId,
     loading,
+    runKind,
+    compactError,
     sessions,
     activeSession,
     pendingPermission,
     send,
     rewindAndSend,
+    compactSession,
     cancel,
     decidePermission,
     createSession,
@@ -280,14 +283,18 @@ function AppContent() {
   );
 
   const handleSlashCommand = useCallback(
-    (name: "/new" | "/clear") => {
+    (name: "/new" | "/clear" | "/compact") => {
       if (name === "/new") {
         handleCreateSession();
         return;
       }
+      if (name === "/compact") {
+        void compactSession();
+        return;
+      }
       void clearSession();
     },
-    [handleCreateSession, clearSession],
+    [handleCreateSession, clearSession, compactSession],
   );
 
   return (
@@ -355,7 +362,9 @@ function AppContent() {
           <MessageList
             sessionId={messageSessionId ?? activeSession?.id}
             messages={setupRequired ? [] : messages}
-            loading={setupRequired ? false : loading}
+            loading={setupRequired ? false : runKind === "chat"}
+            compacting={!setupRequired && runKind === "compact"}
+            compactError={setupRequired ? null : compactError}
             onRewindAndSend={
               workspaceMissing || setupRequired ? undefined : rewindAndSend
             }

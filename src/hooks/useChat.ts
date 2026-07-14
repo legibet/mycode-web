@@ -17,11 +17,13 @@ import type {
   ChatErrorResponse,
   ChatMessage,
   ChatResponse,
+  CompactResponse,
   ComposerSubmission,
   LocalConfig,
   MessageMeta,
   PermissionRequest,
   RunInfo,
+  RunKind,
   SessionResponse,
   SessionSummary,
   SessionsResponse,
@@ -86,7 +88,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 function getErrorDetail(
-  data: ChatResponse | ChatErrorResponse,
+  data: ChatResponse | CompactResponse | ChatErrorResponse,
 ): ChatErrorResponse["detail"] {
   return "detail" in data ? data.detail : undefined;
 }
@@ -367,7 +369,11 @@ export function useChat(config: LocalConfig) {
   });
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSession, setActiveSession] = useState(createDraftSession);
-  const [loading, setLoading] = useState(false);
+  // Kind of the run this client is following; null when idle. `loading` is
+  // derived so chat and compact runs share the busy/cancel plumbing.
+  const [runKind, setRunKind] = useState<RunKind | null>(null);
+  const [compactError, setCompactError] = useState<string | null>(null);
+  const loading = runKind !== null;
   const [sessionLoading, setSessionLoading] = useState(false);
   const [pendingPermissions, setPendingPermissions] = useState<
     PermissionRequest[]
@@ -449,7 +455,8 @@ export function useChat(config: LocalConfig) {
     streamAbortRef.current?.abort();
     streamAbortRef.current = null;
     activeRunRef.current = null;
-    setLoading(false);
+    setRunKind(null);
+    setCompactError(null);
     setPendingPermissions([]);
   }, []);
 
@@ -465,7 +472,8 @@ export function useChat(config: LocalConfig) {
       const controller = new AbortController();
       streamAbortRef.current = controller;
       activeRunRef.current = run;
-      setLoading(true);
+      const kind = run.kind;
+      setRunKind(kind);
 
       const recoverSession = async () => {
         if (
@@ -547,6 +555,17 @@ export function useChat(config: LocalConfig) {
                 );
                 continue;
               }
+              if (kind === "compact") {
+                // A compact run only ever yields the marker or a failure;
+                // history must stay untouched either way.
+                if (event.type === "compact") {
+                  dispatch({ type: "apply_event", event });
+                } else if (event.type === "error") {
+                  console.error("Compaction failed:", event.message);
+                  setCompactError(event.message || "Compaction failed");
+                }
+                continue;
+              }
               dispatch({ type: "apply_event", event });
             } catch (e) {
               console.error("Parse error:", e);
@@ -568,13 +587,16 @@ export function useChat(config: LocalConfig) {
             streamTokenRef.current === token &&
             activeSessionRef.current.id === sessionId
           ) {
-            dispatch({
-              type: "apply_event",
-              event: {
-                type: "error",
-                message: "Stream disconnected. Reload the session to resume.",
-              },
-            });
+            const message =
+              "Stream disconnected. Reload the session to resume.";
+            if (kind === "compact") {
+              setCompactError(message);
+            } else {
+              dispatch({
+                type: "apply_event",
+                event: { type: "error", message },
+              });
+            }
           }
         }
       } finally {
@@ -583,7 +605,7 @@ export function useChat(config: LocalConfig) {
           activeRunRef.current = null;
 
           if (activeSessionRef.current.id === sessionId) {
-            setLoading(false);
+            setRunKind(null);
           }
 
           fetchSessions();
@@ -626,6 +648,7 @@ export function useChat(config: LocalConfig) {
       const pendingEvents = Array.isArray(data.pending_events)
         ? data.pending_events
         : [];
+      const isCompactRun = run?.kind === "compact";
       const replayedPermissions = new Map<string, PermissionRequest>();
       const replayEvents: StreamEvent[] = [];
       for (const event of pendingEvents) {
@@ -640,6 +663,14 @@ export function useChat(config: LocalConfig) {
         }
         if (event?.type === "permission_resolved") {
           replayedPermissions.delete(event.request_id);
+          continue;
+        }
+        if (isCompactRun) {
+          // Same routing as the live stream: only the marker reaches history.
+          if (event?.type === "compact") replayEvents.push(event);
+          else if (event?.type === "error") {
+            setCompactError(event.message || "Compaction failed");
+          }
           continue;
         }
         replayEvents.push(event);
@@ -663,7 +694,7 @@ export function useChat(config: LocalConfig) {
         const lastSeq = pendingEvents.at(-1)?.seq ?? 0;
         streamRun(run, data.session.id, lastSeq);
       } else {
-        setLoading(false);
+        setRunKind(null);
       }
 
       return data;
@@ -698,7 +729,8 @@ export function useChat(config: LocalConfig) {
         ...(attachments?.length ? { attachments } : {}),
         ...(workspaceFiles.length ? { workspaceFiles } : {}),
       });
-      setLoading(true);
+      setRunKind("chat");
+      setCompactError(null);
 
       const commonFields = {
         session_id: sessionId,
@@ -781,7 +813,7 @@ export function useChat(config: LocalConfig) {
           activeSessionRef.current.id === sessionId
         ) {
           pendingRequestTokenRef.current = 0;
-          setLoading(false);
+          setRunKind(null);
           dispatch({ type: "rollback" });
           dispatch({
             type: "apply_event",
@@ -814,7 +846,8 @@ export function useChat(config: LocalConfig) {
       pendingRequestTokenRef.current = requestToken;
 
       dispatch({ type: "rewind_and_start_turn", rewindTo, content });
-      setLoading(true);
+      setRunKind("chat");
+      setCompactError(null);
 
       try {
         const res = await fetch("/api/chat", {
@@ -858,7 +891,7 @@ export function useChat(config: LocalConfig) {
               return;
             }
 
-            setLoading(false);
+            setRunKind(null);
             dispatch({
               type: "apply_event",
               event: {
@@ -891,7 +924,7 @@ export function useChat(config: LocalConfig) {
         ) {
           pendingRequestTokenRef.current = 0;
           dispatch({ type: "rollback" });
-          setLoading(false);
+          setRunKind(null);
           dispatch({
             type: "apply_event",
             event: { type: "error", message: getErrorMessage(e) },
@@ -909,6 +942,58 @@ export function useChat(config: LocalConfig) {
     ],
   );
 
+  const compactSession = useCallback(async () => {
+    const session = activeSessionRef.current;
+    if (loading) return false;
+    if (session.isDraft) {
+      setCompactError("nothing to compact");
+      return false;
+    }
+
+    const sessionId = session.id;
+    setCompactError(null);
+    setRunKind("compact");
+
+    try {
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compact`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: config.provider || undefined,
+            model: config.model || undefined,
+          }),
+        },
+      );
+
+      const data = (await res.json()) as CompactResponse | ChatErrorResponse;
+      if (activeSessionRef.current.id !== sessionId) return false;
+
+      if (!res.ok) {
+        const detail = getErrorDetail(data);
+        const existingRun = getRunFromDetail(detail);
+        if (res.status === 409 && existingRun?.id) {
+          // Another client started a run; attach to it with its own kind.
+          streamRun(existingRun, sessionId, existingRun.last_seq || 0);
+          return false;
+        }
+        throw new Error(getMessageFromDetail(detail, "Compaction failed"));
+      }
+
+      fetchSessions();
+      streamRun((data as CompactResponse).run, sessionId, 0);
+      return true;
+    } catch (e) {
+      if (activeSessionRef.current.id === sessionId) {
+        console.error("Failed to start compaction:", e);
+        setRunKind(null);
+        setCompactError(getErrorMessage(e));
+      }
+      return false;
+    }
+  }, [config.model, config.provider, fetchSessions, loading, streamRun]);
+
   const cancel = useCallback(() => {
     const runId = activeRunRef.current?.id;
     const sessionId = activeSessionRef.current.id;
@@ -921,7 +1006,7 @@ export function useChat(config: LocalConfig) {
     setPendingPermissions([]);
 
     if (!runId) {
-      setLoading(false);
+      setRunKind(null);
       return;
     }
 
@@ -935,7 +1020,7 @@ export function useChat(config: LocalConfig) {
       } catch (error) {
         console.error("Failed to reload session after cancel:", error);
         if (activeSessionRef.current.id === sessionId) {
-          setLoading(false);
+          setRunKind(null);
         }
       }
     })();
@@ -1094,7 +1179,7 @@ export function useChat(config: LocalConfig) {
         setActiveSessionSnapshot(draft);
         setSessions([draft]);
         dispatch({ type: "set_messages", messages: [], sessionId: draft.id });
-        setLoading(false);
+        setRunKind(null);
       } catch (e) {
         console.error("Failed to delete session:", e);
       } finally {
@@ -1204,7 +1289,7 @@ export function useChat(config: LocalConfig) {
           setActiveSessionSnapshot(draft);
           setSessions([draft]);
           dispatch({ type: "set_messages", messages: [], sessionId: draft.id });
-          setLoading(false);
+          setRunKind(null);
         }
       } catch (e) {
         console.error("Failed to initialize sessions:", e);
@@ -1229,12 +1314,15 @@ export function useChat(config: LocalConfig) {
     messages,
     messageSessionId: chatState.messageSessionId,
     loading,
+    runKind,
+    compactError,
     sessions,
     activeSession,
     sessionLoading,
     pendingPermission: pendingPermissions[0] ?? null,
     send,
     rewindAndSend,
+    compactSession,
     cancel,
     decidePermission,
     createSession,
