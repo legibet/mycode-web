@@ -138,6 +138,7 @@ function buildDraft(response: SettingsResponse): DraftState {
       reasoning_effort: isReasoningEffort(entry.reasoning_effort)
         ? entry.reasoning_effort
         : "",
+      supports_reasoning_effort: Boolean(entry.supports_reasoning_effort),
       api_key_input: typeof entry.api_key === "string" ? entry.api_key : "",
       api_key_dirty: false,
       api_key_saved: Boolean(entry.api_key_saved),
@@ -198,6 +199,8 @@ function buildPayload(
     }
     if (p.base_url.trim()) entry.base_url = p.base_url.trim();
     if (p.reasoning_effort) entry.reasoning_effort = p.reasoning_effort;
+    if (p.type === "openai_chat" && p.supports_reasoning_effort)
+      entry.supports_reasoning_effort = true;
     // api_key three-state: dirty → string (incl. empty=clear); not dirty → null=keep.
     // Renaming severs the on-disk lookup the server uses to preserve secrets, so
     // we send the current input verbatim (env-refs survive; literal "saved" keys
@@ -306,6 +309,7 @@ export function SettingsPanel({
         model_overrides: {},
         base_url: "",
         reasoning_effort: "",
+        supports_reasoning_effort: false,
         api_key_input: "",
         api_key_dirty: false,
         api_key_saved: false,

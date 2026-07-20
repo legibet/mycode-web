@@ -378,6 +378,9 @@ export interface GlobalProviderEntry {
   api_key_saved?: boolean;
   base_url?: string;
   reasoning_effort?: string | null;
+  /** Opt-in for a generic openai_chat endpoint that accepts the standard
+   * top-level reasoning_effort. Ignored for other provider types. */
+  supports_reasoning_effort?: boolean;
   model_overrides?: Record<string, Record<string, unknown>>;
 }
 

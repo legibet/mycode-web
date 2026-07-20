@@ -3,7 +3,8 @@
  * holds the array of these in the panel state and merges into the PUT payload.
  */
 
-import { Plus, X } from "lucide-react";
+import { Checkbox } from "@base-ui/react/checkbox";
+import { Check, Plus, X } from "lucide-react";
 import { type KeyboardEvent, memo, useId, useState } from "react";
 import type { ReasoningEffort } from "../../types";
 import { cn } from "../../utils/cn";
@@ -22,6 +23,9 @@ export interface ProviderDraft {
   model_overrides: Record<string, Record<string, unknown>>;
   base_url: string;
   reasoning_effort: ReasoningEffort | "";
+  /** Opt-in to forward reasoning_effort. Only meaningful (and only rendered)
+   * for the generic openai_chat type. */
+  supports_reasoning_effort: boolean;
   api_key_input: string;
   api_key_dirty: boolean;
   api_key_saved: boolean;
@@ -164,6 +168,30 @@ export const ProviderCard = memo(function ProviderCard({
             autoCapitalize="off"
           />
         </Field>
+
+        {draft.type === "openai_chat" && (
+          <Field label="Reasoning effort">
+            <Checkbox.Root
+              checked={draft.supports_reasoning_effort}
+              onCheckedChange={(checked) =>
+                update({ supports_reasoning_effort: checked })
+              }
+              className="group flex h-9 items-center gap-2.5 ml-2 cursor-pointer select-none"
+            >
+              <span className="flex size-4 items-center justify-center rounded-[4px] border border-border/60 transition-colors group-hover:border-border group-data-[checked]:border-accent group-data-[checked]:bg-accent">
+                <Checkbox.Indicator>
+                  <Check
+                    className="size-3 text-accent-foreground"
+                    strokeWidth={3}
+                  />
+                </Checkbox.Indicator>
+              </span>
+              <span className="text-[12px] text-muted-foreground/70">
+                Enable if this endpoint accepts a reasoning effort level.
+              </span>
+            </Checkbox.Root>
+          </Field>
+        )}
 
         <Field label="API key" hint={apiKeyHint}>
           <div className="flex items-center gap-2">
