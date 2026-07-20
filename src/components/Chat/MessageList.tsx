@@ -48,10 +48,11 @@ export const MessageList = memo(function MessageList({
   emptyStateFooter,
 }: MessageListProps) {
   const sessionKey = sessionId || DRAFT_SESSION_KEY;
+  const contentKey = messages.length === 0 ? "empty" : "ready";
 
   return (
     <WindowedMessages
-      key={sessionKey}
+      key={`${sessionKey}:${contentKey}`}
       messages={messages}
       loading={loading}
       compacting={compacting}
