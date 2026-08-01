@@ -4,7 +4,11 @@
  * \(inline\) and \[display\] are normalized before parsing.
  */
 
-import { type ComponentPropsWithoutRef, memo } from "react";
+import {
+  type ComponentProps,
+  type ComponentPropsWithoutRef,
+  memo,
+} from "react";
 import ReactMarkdown, {
   type Components,
   type ExtraProps,
@@ -14,11 +18,17 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { CodeBlock } from "./CodeBlock";
+import { remarkSingleDollarMath } from "./remarkSingleDollarMath";
 
 type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & ExtraProps;
 type MarkdownTableProps = ComponentPropsWithoutRef<"table"> & ExtraProps;
+type ReactMarkdownProps = ComponentProps<typeof ReactMarkdown>;
 
-const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REMARK_PLUGINS: NonNullable<ReactMarkdownProps["remarkPlugins"]> = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+  remarkSingleDollarMath,
+];
 const REHYPE_PLUGINS = [rehypeKatex];
 
 const MARKDOWN_COMPONENTS: Components = {
@@ -36,7 +46,7 @@ const MARKDOWN_COMPONENTS: Components = {
  * remark-math parses same-line $$...$$ as text math, so display math is
  * expanded into flow-math fences.
  */
-export function normalizeMathDelimiters(text: string): string {
+function normalizeMathDelimiters(text: string): string {
   let result = "";
   let i = 0;
   let fenceChar = "";
@@ -127,7 +137,7 @@ export function normalizeMathDelimiters(text: string): string {
       if (close !== -1) {
         const body = text.slice(i + 2, close);
         if (!body.includes("\n")) {
-          result += `$${body}$`;
+          result += `$$${body}$$`;
           i = close + 2;
           continue;
         }
