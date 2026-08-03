@@ -188,17 +188,43 @@ export interface ComposerSubmission {
 }
 
 export interface MessageMeta {
-  total_tokens?: number;
   model?: string;
   provider?: string;
   context_window?: number;
+  /** Per-request token counts persisted by the SDK (history path). */
+  usage?: Record<string, number | null>;
+  /** Response-only per-request cost stamped by the server (history path).
+   * Absent when the request cannot be priced. */
+  request_cost_usd?: number;
+  /** Streaming path: turn-cumulative values patched from SSE usage events.
+   * null means the turn's value became unknown (poisoned). */
+  context_tokens?: number | null;
+  turn_usage?: Record<string, number | null> | undefined;
+  turn_cost_usd?: number | null;
   [key: string]: unknown;
+}
+
+/** Per-turn usage stats derived by buildRenderMessages() for one assistant
+ * bubble. A field is a number when known, null when the turn's value is
+ * unknown (a request reported no value, or its cost cannot be priced), and
+ * absent when nothing contributed it. */
+export interface TurnStats {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  context_tokens?: number;
+  context_window?: number;
+  cost_usd?: number | null;
 }
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system" | "compact";
   content: MessageBlock[];
   meta?: MessageMeta;
+  /** Derived per-turn stats; only set on render assistant messages. */
+  stats?: TurnStats;
   renderKey?: string;
   sourceIndex?: number;
 }
@@ -283,12 +309,19 @@ interface PermissionResolvedEvent extends StreamEventBase {
   decision: "allow" | "deny";
 }
 
+/** SSE serialization drops null fields: an absent field means unknown. */
 interface UsageEvent extends StreamEventBase {
   type: "usage";
-  total_tokens?: number;
+  context_tokens?: number;
   context_window?: number;
   model?: string;
   provider?: string;
+  /** Turn-cumulative token counts; null values are poisoned classes. */
+  turn_usage?: Record<string, number | null>;
+  /** Turn-cumulative cost. */
+  cost_usd?: number;
+  /** Pre-run session cost + turn cost, composed by the server. */
+  session_cost_usd?: number;
 }
 
 export type StreamEvent =
@@ -318,6 +351,7 @@ export interface SessionsResponse {
 export interface SessionResponse {
   session: SessionSummary | null;
   messages: ChatMessage[];
+  session_cost_usd?: number | null;
   active_run: RunInfo | null;
   pending_events: StreamEvent[];
 }

@@ -14,6 +14,7 @@ import type {
   ToolResultBlock,
   ToolRuntime,
   ToolUseBlock,
+  TurnStats,
   WorkspaceFileReference,
 } from "../types";
 import { isCompactMarker } from "../types";
@@ -363,6 +364,75 @@ function createCompactMarker(sourceIndex: number): CompactMarkerMessage {
   };
 }
 
+const TURN_TOKEN_KEYS = [
+  "input_tokens",
+  "output_tokens",
+  "cache_read_tokens",
+  "cache_write_tokens",
+  "reasoning_tokens",
+] as const;
+
+/**
+ * Fold one raw assistant's meta into the turn stats of its render bubble.
+ *
+ * Two mutually exclusive shapes feed this:
+ * - Streaming: SSE usage events patch turn-CUMULATIVE `turn_usage` /
+ *   `turn_cost_usd` onto each raw message, so the latest raw carrying them
+ *   replaces everything accumulated before — summing would double-count.
+ * - History: each raw carries its own per-request `usage` and server-priced
+ *   `request_cost_usd`, which sum across the turn.
+ *
+ * null marks a value that became unknown: a null token class poisons that
+ * row, a request with usage but no price poisons the turn cost. A raw with
+ * no usage at all (cancelled partial) contributes nothing.
+ */
+function foldTurnStats(
+  prev: TurnStats | undefined,
+  meta: MessageMeta | undefined,
+): TurnStats | undefined {
+  if (!meta) return prev;
+  const contextWindow =
+    typeof meta.context_window === "number"
+      ? meta.context_window
+      : prev?.context_window;
+
+  if (meta.turn_usage !== undefined || meta.turn_cost_usd !== undefined) {
+    const stats: TurnStats = {};
+    if (contextWindow !== undefined) stats.context_window = contextWindow;
+    if (typeof meta.context_tokens === "number") {
+      stats.context_tokens = meta.context_tokens;
+    }
+    for (const key of TURN_TOKEN_KEYS) {
+      const value = meta.turn_usage?.[key];
+      if (value !== undefined) stats[key] = value;
+    }
+    if (meta.turn_cost_usd !== undefined) stats.cost_usd = meta.turn_cost_usd;
+    return stats;
+  }
+
+  const usage = isObject(meta.usage) ? meta.usage : null;
+  if (!usage) return prev;
+
+  const stats: TurnStats = { ...prev };
+  if (contextWindow !== undefined) stats.context_window = contextWindow;
+  // Context occupancy is the latest request's total, never a sum.
+  if (typeof usage["total_tokens"] === "number") {
+    stats.context_tokens = usage["total_tokens"];
+  }
+  for (const key of TURN_TOKEN_KEYS) {
+    const value = usage[key];
+    if (stats[key] === null || value === undefined) continue;
+    stats[key] = typeof value === "number" ? (stats[key] ?? 0) + value : null;
+  }
+  if (stats.cost_usd !== null) {
+    stats.cost_usd =
+      typeof meta.request_cost_usd === "number"
+        ? (stats.cost_usd ?? 0) + meta.request_cost_usd
+        : null;
+  }
+  return stats;
+}
+
 function createRenderAssistantMessage(sourceIndex: number): ChatMessage {
   return {
     role: "assistant",
@@ -545,7 +615,8 @@ export function buildRenderMessages(
 
     // Tool loops collapse multiple raw assistants into one render message;
     // overwrite (or clear) meta from the latest raw call so the bubble never
-    // shows stale per-turn fields from earlier iterations.
+    // shows stale per-turn fields from earlier iterations. Turn stats fold
+    // across all of the turn's raw messages instead.
     const merged: ChatMessage = {
       ...assistantMessage,
       content: assistantContent,
@@ -556,6 +627,8 @@ export function buildRenderMessages(
     } else {
       delete merged.meta;
     }
+    const stats = foldTurnStats(assistantMessage.stats, rawMeta);
+    if (stats) merged.stats = stats;
     currentAssistant = merged;
     result[messageIndex] = merged;
   }

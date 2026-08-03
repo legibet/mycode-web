@@ -371,6 +371,104 @@ describe("useChat", () => {
     });
   });
 
+  it("exposes the session cost from a loaded session", async () => {
+    globalThis.localStorage.setItem(
+      "mycode.activeSessions",
+      JSON.stringify({ "/workspace/a": "session-2" }),
+    );
+    mockFetch({
+      "/api/sessions?cwd=": createJsonResponse({
+        sessions: [{ id: "session-2", title: "Done" }],
+      }),
+      "/api/sessions/session-2": createJsonResponse({
+        session: { id: "session-2", title: "Done" },
+        messages: [],
+        session_cost_usd: 0.42,
+        active_run: null,
+        pending_events: [],
+      }),
+    });
+
+    const { result } = renderChatHook();
+
+    await waitFor(() => {
+      expect(result.current.sessionLoading).toBe(false);
+      expect(result.current.sessionCostUsd).toBe(0.42);
+    });
+  });
+
+  it("lets usage events supersede the session cost; an absent value means unknown", async () => {
+    globalThis.localStorage.setItem(
+      "mycode.activeSessions",
+      JSON.stringify({ "/workspace/a": "session-2" }),
+    );
+    mockFetch({
+      "/api/sessions?cwd=": createJsonResponse({
+        sessions: [{ id: "session-2", title: "Running" }],
+      }),
+      "/api/sessions/session-2": createJsonResponse({
+        session: { id: "session-2", title: "Running" },
+        messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        session_cost_usd: 0.4,
+        active_run: {
+          id: "run-2",
+          session_id: "session-2",
+          kind: "chat",
+          status: "running",
+          last_seq: 3,
+        },
+        pending_events: [
+          { type: "text", delta: "hi", seq: 1 },
+          {
+            type: "usage",
+            context_tokens: 1_000,
+            context_window: 100_000,
+            turn_usage: { input_tokens: 900, output_tokens: 100 },
+            cost_usd: 0.01,
+            session_cost_usd: 0.41,
+            seq: 2,
+          },
+          // SSE drops null fields: a poisoned turn arrives without cost
+          // fields, and both the turn and session totals become unknown.
+          {
+            type: "usage",
+            context_tokens: 1_000,
+            context_window: 100_000,
+            turn_usage: { input_tokens: null, output_tokens: null },
+            seq: 3,
+          },
+        ],
+      }),
+      "/api/runs/run-2/stream?after=3": new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    });
+
+    const { result } = renderChatHook();
+
+    await waitFor(() => {
+      expect(result.current.sessionLoading).toBe(false);
+      expect(result.current.messages).toHaveLength(2);
+    });
+
+    // The replayed cumulative usage events supersede the loaded base; the
+    // last one poisoned the turn, so every derived number is unknown.
+    expect(result.current.sessionCostUsd).toBeNull();
+    // Context occupancy stays known — the composer cluster keeps showing it.
+    expect(result.current.currentContext).toEqual({
+      tokens: 1_000,
+      window: 100_000,
+    });
+    expect(expectChat(result.current.messages[1]).stats).toEqual({
+      input_tokens: null,
+      output_tokens: null,
+      context_tokens: 1_000,
+      context_window: 100_000,
+      cost_usd: null,
+    });
+  });
+
   it("updates the active session immediately while loading selected history", async () => {
     saveActiveSession("/workspace/a", "session-1");
 

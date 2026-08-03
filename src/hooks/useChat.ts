@@ -31,6 +31,7 @@ import type {
   ToolRuntime,
   WorkspaceFileReference,
 } from "../types";
+import { isCompactMarker } from "../types";
 import { randomId } from "../utils/id";
 import {
   appendAssistantDelta,
@@ -60,6 +61,9 @@ interface ChatState {
   messageSessionId: string | null;
   rawMessages: ChatMessage[];
   toolRuntimeById: Record<string, ToolRuntime>;
+  /** Session cumulative cost estimate; null when unknown. Set on session
+   * load, updated live by SSE usage events. */
+  sessionCostUsd: number | null;
   /** Snapshot of rawMessages taken before the latest optimistic turn.
    * Used by 'rollback' to restore state when the request fails. */
   preTurnRawMessages: ChatMessage[] | null;
@@ -70,6 +74,7 @@ type ChatAction =
       type: "set_messages";
       messages: ChatMessage[];
       sessionId?: string | null;
+      sessionCostUsd?: number | null;
       replayEvents?: StreamEvent[];
       expectedSessionId?: string | null;
     }
@@ -186,6 +191,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         messageSessionId: action.sessionId ?? state.messageSessionId,
         rawMessages: action.messages,
         toolRuntimeById: {},
+        sessionCostUsd: action.sessionCostUsd ?? null,
         preTurnRawMessages: null,
       };
 
@@ -240,6 +246,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         rawMessages: snapshot,
         messageSessionId: state.messageSessionId,
         toolRuntimeById: {},
+        sessionCostUsd: state.sessionCostUsd,
         preTurnRawMessages: null,
       };
     }
@@ -337,18 +344,27 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           `\n\n**Error:** ${event.message || "Unknown"}`,
         );
       } else if (event.type === "usage") {
-        const patch: Partial<MessageMeta> = {};
-        if (typeof event.total_tokens === "number") {
-          patch.total_tokens = event.total_tokens;
-        }
+        // The event carries the turn's cumulative values; SSE drops null
+        // fields, so an absent field means the value became unknown. Every
+        // event overwrites the whole group — a partial patch would leave a
+        // stale number standing next to a poisoned one.
+        const patch: Partial<MessageMeta> = {
+          context_tokens: event.context_tokens ?? null,
+          turn_usage: event.turn_usage,
+          turn_cost_usd: event.cost_usd ?? null,
+        };
         if (typeof event.context_window === "number") {
           patch.context_window = event.context_window;
         }
         if (event.model) patch.model = event.model;
         if (event.provider) patch.provider = event.provider;
-        if (Object.keys(patch).length > 0) {
-          rawMessages = updateLatestAssistantMeta(rawMessages, patch);
-        }
+        rawMessages = updateLatestAssistantMeta(rawMessages, patch);
+        return {
+          ...state,
+          rawMessages,
+          toolRuntimeById,
+          sessionCostUsd: event.session_cost_usd ?? null,
+        };
       } else if (event.type === "compact") {
         rawMessages = [...rawMessages, { role: "compact", content: [] }];
       }
@@ -365,6 +381,7 @@ export function useChat(config: LocalConfig) {
     messageSessionId: null,
     rawMessages: [],
     toolRuntimeById: {},
+    sessionCostUsd: null,
     preTurnRawMessages: null,
   });
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -680,6 +697,7 @@ export function useChat(config: LocalConfig) {
           type: "set_messages",
           messages: data.messages || [],
           sessionId: data.session?.id ?? sessionId,
+          sessionCostUsd: data.session_cost_usd ?? null,
           replayEvents,
           expectedSessionId: data.session?.id ?? sessionId,
         });
@@ -1310,9 +1328,26 @@ export function useChat(config: LocalConfig) {
     [chatState.rawMessages, chatState.toolRuntimeById],
   );
 
+  // Current context occupancy: the latest turn that reported one. A compact
+  // marker stops the scan — pre-compact occupancy no longer describes the
+  // session, so nothing shows until the next turn reports.
+  const currentContext = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (!message || isCompactMarker(message)) break;
+      const stats = message.role === "assistant" ? message.stats : undefined;
+      if (stats?.context_tokens && stats?.context_window) {
+        return { tokens: stats.context_tokens, window: stats.context_window };
+      }
+    }
+    return null;
+  }, [messages]);
+
   return {
     messages,
     messageSessionId: chatState.messageSessionId,
+    sessionCostUsd: chatState.sessionCostUsd,
+    currentContext,
     loading,
     runKind,
     compactError,

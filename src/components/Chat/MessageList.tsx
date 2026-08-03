@@ -269,9 +269,8 @@ function WindowedMessages({
                 sourceIndex={message.sourceIndex}
                 isStreaming={isStreamingMessage}
                 isLoading={loading}
-                totalTokens={message.meta?.total_tokens}
                 model={message.meta?.model}
-                contextWindow={message.meta?.context_window}
+                stats={message.stats}
                 onRewindAndSend={onRewindAndSend}
               />
             </div>

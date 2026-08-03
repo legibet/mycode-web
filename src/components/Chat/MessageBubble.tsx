@@ -23,11 +23,14 @@ import type {
   ImageBlock,
   MessageBlock,
   TextBlock,
+  TurnStats,
 } from "../../types";
 import { copyText } from "../../utils/clipboard";
 import { cn } from "../../utils/cn";
+import { formatCost } from "../../utils/format";
 import { MarkdownBlock } from "./MarkdownBlock";
 import { ReasoningBlock } from "./ReasoningBlock";
+import { StatsHover, StatsRow } from "./StatsCard";
 import { ToolCard } from "./ToolCard";
 
 interface MessageBubbleProps {
@@ -36,9 +39,8 @@ interface MessageBubbleProps {
   sourceIndex?: number | undefined;
   isStreaming?: boolean | undefined;
   isLoading: boolean;
-  totalTokens?: number | undefined;
   model?: string | undefined;
-  contextWindow?: number | undefined;
+  stats?: TurnStats | undefined;
   onRewindAndSend?:
     | ((rewindTo: number, input: string) => Promise<void>)
     | undefined;
@@ -143,6 +145,25 @@ function blockListsEqual(prev: MessageBlock[], next: MessageBlock[]): boolean {
   return true;
 }
 
+// Stats objects are rebuilt on every projection, so compare by value.
+function turnStatsEqual(
+  prev: TurnStats | undefined,
+  next: TurnStats | undefined,
+): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  return (
+    prev.input_tokens === next.input_tokens &&
+    prev.output_tokens === next.output_tokens &&
+    prev.cache_read_tokens === next.cache_read_tokens &&
+    prev.cache_write_tokens === next.cache_write_tokens &&
+    prev.reasoning_tokens === next.reasoning_tokens &&
+    prev.context_tokens === next.context_tokens &&
+    prev.context_window === next.context_window &&
+    prev.cost_usd === next.cost_usd
+  );
+}
+
 function messageBubblePropsEqual(
   prev: MessageBubbleProps,
   next: MessageBubbleProps,
@@ -151,9 +172,8 @@ function messageBubblePropsEqual(
     prev.role !== next.role ||
     prev.sourceIndex !== next.sourceIndex ||
     prev.isStreaming !== next.isStreaming ||
-    prev.totalTokens !== next.totalTokens ||
     prev.model !== next.model ||
-    prev.contextWindow !== next.contextWindow ||
+    !turnStatsEqual(prev.stats, next.stats) ||
     prev.onRewindAndSend !== next.onRewindAndSend
   ) {
     return false;
@@ -191,41 +211,46 @@ const renderErrorFallback = (
   </div>
 );
 
-function ContextStats({
+/** Per-turn footer: `model · $0.0164`, this turn's token breakdown on hover.
+ * Session-state numbers (context %, session total) live at the composer. */
+function TurnStatsFooter({
   model,
-  totalTokens,
-  contextWindow,
+  stats,
 }: {
   model?: string | undefined;
-  totalTokens?: number | undefined;
-  contextWindow?: number | undefined;
+  stats?: TurnStats | undefined;
 }) {
-  const pct =
-    totalTokens && contextWindow
-      ? Math.round((totalTokens / contextWindow) * 100)
-      : null;
-  const visible = [model, pct != null ? `${pct}%` : null]
-    .filter(Boolean)
-    .join(" · ");
+  const cost =
+    typeof stats?.cost_usd === "number" ? formatCost(stats.cost_usd) : null;
+  const visible = [model, cost].filter(Boolean).join(" · ");
   if (!visible) return null;
 
-  const detail =
-    totalTokens && contextWindow
-      ? `${totalTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
-      : null;
+  // Input/Output show explicit zeros; cache rows only appear when nonzero.
+  const tokenRows: [string, number][] = [];
+  const pushRow = (label: string, value: number | null | undefined) => {
+    if (typeof value === "number") tokenRows.push([label, value]);
+  };
+  pushRow("Input", stats?.input_tokens);
+  pushRow("Output", stats?.output_tokens);
+  if (stats?.cache_read_tokens) pushRow("Cache read", stats.cache_read_tokens);
+  if (stats?.cache_write_tokens) {
+    pushRow("Cache write", stats.cache_write_tokens);
+  }
+
+  if (tokenRows.length === 0) {
+    return (
+      <span className="cursor-default text-xs tabular-nums text-muted-foreground/50">
+        {visible}
+      </span>
+    );
+  }
 
   return (
-    <span className="group/stats relative cursor-default text-xs tabular-nums text-muted-foreground/60">
-      {visible}
-      {detail && (
-        <span
-          role="tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 whitespace-nowrap rounded-md border border-border/40 bg-popover px-2.5 py-1 text-xs tabular-nums text-popover-foreground opacity-0 shadow-md transition-opacity delay-200 duration-150 group-hover/stats:opacity-100"
-        >
-          {detail}
-        </span>
-      )}
-    </span>
+    <StatsHover trigger={visible}>
+      {tokenRows.map(([label, value]) => (
+        <StatsRow key={label} label={label} value={value.toLocaleString()} />
+      ))}
+    </StatsHover>
   );
 }
 
@@ -250,9 +275,8 @@ export const MessageBubble = memo(function MessageBubble({
   sourceIndex,
   isStreaming,
   isLoading,
-  totalTokens,
   model,
-  contextWindow,
+  stats,
   onRewindAndSend,
 }: MessageBubbleProps) {
   const isUser = role === "user";
@@ -559,13 +583,7 @@ export const MessageBubble = memo(function MessageBubble({
               <Copy className="size-3.5" />
             )}
           </button>
-          {(model || totalTokens) && (
-            <ContextStats
-              model={model}
-              totalTokens={totalTokens}
-              contextWindow={contextWindow}
-            />
-          )}
+          {(model || stats) && <TurnStatsFooter model={model} stats={stats} />}
         </div>
       )}
     </div>

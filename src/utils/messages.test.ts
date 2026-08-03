@@ -177,3 +177,167 @@ describe("messages", () => {
     });
   });
 });
+
+describe("turn stats", () => {
+  it("sums per-request usage and cost across a history tool loop", () => {
+    const renderMessages = buildRenderMessages([
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "bash", input: {} }],
+        meta: {
+          model: "m",
+          context_window: 100_000,
+          usage: { total_tokens: 1_000, input_tokens: 900, output_tokens: 100 },
+          request_cost_usd: 0.01,
+        },
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            output: "ok",
+            metadata: null,
+            is_error: false,
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        meta: {
+          model: "m",
+          context_window: 100_000,
+          usage: {
+            total_tokens: 2_000,
+            input_tokens: 1_500,
+            output_tokens: 500,
+            cache_read_tokens: 800,
+          },
+          request_cost_usd: 0.02,
+        },
+      },
+    ]);
+
+    expect(renderMessages).toHaveLength(2);
+    expect(expectChat(renderMessages[1]).stats).toEqual({
+      input_tokens: 2_400,
+      output_tokens: 600,
+      cache_read_tokens: 800,
+      // Context occupancy is the last request's total, not a sum.
+      context_tokens: 2_000,
+      context_window: 100_000,
+      cost_usd: 0.03,
+    });
+  });
+
+  it("skips usage-less records but poisons cost on unpriced usage", () => {
+    const renderMessages = buildRenderMessages([
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      // Cancelled partial: no usage at all — contributes nothing.
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        meta: { model: "m" },
+      },
+      { role: "user", content: [{ type: "text", text: "again" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "bash", input: {} }],
+        meta: {
+          usage: { total_tokens: 1_000, input_tokens: 900, output_tokens: 100 },
+          request_cost_usd: 0.01,
+        },
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            output: "ok",
+            metadata: null,
+            is_error: false,
+          },
+        ],
+      },
+      // Usage recorded but the server could not price it: the turn's token
+      // sums stay, its cost becomes unknown.
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        meta: {
+          usage: {
+            total_tokens: 2_000,
+            input_tokens: 1_800,
+            output_tokens: 200,
+          },
+        },
+      },
+    ]);
+
+    expect(expectChat(renderMessages[1]).stats).toBeUndefined();
+    expect(expectChat(renderMessages[3]).stats).toEqual({
+      input_tokens: 2_700,
+      output_tokens: 300,
+      context_tokens: 2_000,
+      cost_usd: null,
+    });
+  });
+
+  it("takes the latest cumulative values for a streaming turn instead of summing", () => {
+    // SSE usage events patch turn-cumulative values onto each raw assistant
+    // of the tool loop; summing them would double-count the earlier requests.
+    const renderMessages = buildRenderMessages([
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "bash", input: {} }],
+        meta: {
+          context_tokens: 1_000,
+          context_window: 100_000,
+          turn_usage: { input_tokens: 900, output_tokens: 100 },
+          turn_cost_usd: 0.01,
+        },
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            output: "ok",
+            metadata: null,
+            is_error: false,
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        meta: {
+          context_tokens: 2_000,
+          context_window: 100_000,
+          turn_usage: {
+            input_tokens: 2_400,
+            output_tokens: 600,
+            reasoning_tokens: null,
+          },
+          turn_cost_usd: 0.03,
+        },
+      },
+    ]);
+
+    expect(expectChat(renderMessages[1]).stats).toEqual({
+      input_tokens: 2_400,
+      output_tokens: 600,
+      // A poisoned (null) class stays visible as unknown, not a number.
+      reasoning_tokens: null,
+      context_tokens: 2_000,
+      context_window: 100_000,
+      cost_usd: 0.03,
+    });
+  });
+});

@@ -64,10 +64,11 @@ web/src/
 
 ## Message State Model
 
-`useChat.ts` keeps two pieces of reducer state:
+`useChat.ts` keeps three pieces of reducer state:
 
 - `rawMessages: ChatMessage[]` — canonical block messages (mirrors the JSONL timeline; includes `role: "compact"` markers)
 - `toolRuntimeById` — ephemeral tool runtime state (streaming output, pending flags, final result)
+- `sessionCostUsd` — session cumulative cost estimate; set from session load, replaced by each SSE `usage` event's `session_cost_usd` (absent field → null → hidden)
 
 The render-ready list `messages: RenderMessage[]` (where `RenderMessage = ChatMessage | CompactMarkerMessage`) is derived via `useMemo(buildRenderMessages(rawMessages, toolRuntimeById))`. There is no second copy of state to keep in sync — every reducer transition produces a new `rawMessages` and/or `toolRuntimeById` reference and the projection is recomputed.
 
@@ -82,6 +83,10 @@ State is managed via `useReducer` with actions:
 - `rollback` — restore the snapshot taken before an optimistic turn
 
 `buildRenderMessages()` in `utils/messages.ts` is the single projection used by both initial load and live streaming: tool results visually attach to their `tool_use`, multiple assistant turns of a tool loop merge into one bubble, and every `role: "compact"` entry surfaces as a `CompactMarkerMessage`. A live `compact` SSE event appends a `{role: "compact"}` entry to `rawMessages`; the marker appears on the next render.
+
+The projection also derives `stats: TurnStats` per assistant bubble (footer `model · $0.0164` + hover token breakdown in `MessageBubble`). Two mutually exclusive meta shapes feed it: history raws carry per-request `usage` and server-priced `request_cost_usd`, which sum across the turn; streaming raws carry turn-cumulative `turn_usage`/`turn_cost_usd` patched from SSE `usage` events, where the latest raw replaces the accumulation (summing would double-count). `null` marks a value that became unknown — the UI omits that row/segment. The web never prices tokens; it only sums server-computed costs.
+
+Session-state numbers live at the composer, not on bubbles: `useChat` derives `currentContext` (the latest turn reporting context occupancy; a compact marker stops the scan) and exposes `sessionCostUsd`, rendered by `InputArea` as a `27% · $0.42` cluster next to the send button. Mobile keeps only the percentage (the auto-compact warning signal); the cost segment is desktop-only.
 
 Key design decisions:
 

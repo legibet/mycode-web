@@ -30,9 +30,11 @@ import type {
 } from "../../types";
 import { cn } from "../../utils/cn";
 import type { SlashCommand } from "../../utils/completion";
+import { formatCost } from "../../utils/format";
 import { randomId } from "../../utils/id";
 import { Composer, type ComposerHandle } from "./Composer";
 import { EffortTrigger, ModelTrigger } from "./InputPills";
+import { StatsHover, StatsRow } from "./StatsCard";
 
 const EMPTY_SKILLS: SkillInfo[] = [];
 
@@ -120,6 +122,10 @@ interface InputAreaProps {
   onSlashCommand?: (name: SlashCommand["name"]) => void;
   disabledReason?: string | undefined;
   disabled?: boolean | undefined;
+  /** Session state cluster: context occupancy and cumulative cost estimate.
+   * Unknown parts are hidden. */
+  sessionCostUsd?: number | null;
+  currentContext?: { tokens: number; window: number } | null;
 }
 
 interface InputNotice {
@@ -210,6 +216,52 @@ async function processFiles(
   };
 }
 
+/** Session state cluster: `27% · $0.42`, context detail on hover.
+ * Mobile keeps only the context percentage — it warns of the approaching
+ * auto-compact and always fits; the cost segment is desktop-only. */
+function SessionStats({
+  currentContext,
+  sessionCostUsd,
+}: {
+  currentContext: { tokens: number; window: number } | null;
+  sessionCostUsd: number | null;
+}) {
+  const pct = currentContext
+    ? `${Math.round((currentContext.tokens / currentContext.window) * 100)}%`
+    : null;
+  const cost =
+    typeof sessionCostUsd === "number" ? formatCost(sessionCostUsd) : null;
+  if (!pct && !cost) return null;
+
+  const trigger = (
+    <>
+      {pct}
+      {cost && (
+        <span className={pct ? "max-md:hidden" : undefined}>
+          {pct ? ` · ${cost}` : cost}
+        </span>
+      )}
+    </>
+  );
+
+  return (
+    <span className={cn("mr-2 shrink-0", !pct && "max-md:hidden")}>
+      {currentContext ? (
+        <StatsHover trigger={trigger} align="right">
+          <StatsRow
+            label="Context"
+            value={`${currentContext.tokens.toLocaleString()} / ${currentContext.window.toLocaleString()}`}
+          />
+        </StatsHover>
+      ) : (
+        <span className="cursor-default text-xs tabular-nums text-muted-foreground/50">
+          {trigger}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export const InputArea = memo(function InputArea({
   loading,
   onSubmit,
@@ -225,6 +277,8 @@ export const InputArea = memo(function InputArea({
   onSlashCommand,
   disabledReason,
   disabled: disabledProp = false,
+  sessionCostUsd = null,
+  currentContext = null,
 }: InputAreaProps) {
   const composerRef = useRef<ComposerHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -563,6 +617,11 @@ export const InputArea = memo(function InputArea({
               />
             )}
           </div>
+
+          <SessionStats
+            currentContext={currentContext}
+            sessionCostUsd={sessionCostUsd}
+          />
 
           {loading ? (
             <button
