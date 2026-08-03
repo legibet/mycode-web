@@ -573,8 +573,8 @@ export function useChat(config: LocalConfig) {
                 continue;
               }
               if (kind === "compact") {
-                // A compact run only ever yields the marker or a failure;
-                // history must stay untouched either way.
+                // A compact run only surfaces its marker or failure here. The
+                // completed stream reloads persisted history and session cost.
                 if (event.type === "compact") {
                   dispatch({ type: "apply_event", event });
                 } else if (event.type === "error") {
@@ -588,6 +588,10 @@ export function useChat(config: LocalConfig) {
               console.error("Parse error:", e);
             }
           }
+        }
+
+        if (kind === "compact" && sawDone) {
+          await recoverSession();
         }
 
         if (!sawDone) {

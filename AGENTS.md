@@ -68,7 +68,7 @@ web/src/
 
 - `rawMessages: ChatMessage[]` — canonical block messages (mirrors the JSONL timeline; includes `role: "compact"` markers)
 - `toolRuntimeById` — ephemeral tool runtime state (streaming output, pending flags, final result)
-- `sessionCostUsd` — session cumulative cost estimate; set from session load, replaced by each SSE `usage` event's `session_cost_usd` (absent field → null → hidden)
+- `sessionCostUsd` — session cost from session load or the latest SSE `usage`; `null` is hidden
 
 The render-ready list `messages: RenderMessage[]` (where `RenderMessage = ChatMessage | CompactMarkerMessage`) is derived via `useMemo(buildRenderMessages(rawMessages, toolRuntimeById))`. There is no second copy of state to keep in sync — every reducer transition produces a new `rawMessages` and/or `toolRuntimeById` reference and the projection is recomputed.
 
@@ -84,9 +84,14 @@ State is managed via `useReducer` with actions:
 
 `buildRenderMessages()` in `utils/messages.ts` is the single projection used by both initial load and live streaming: tool results visually attach to their `tool_use`, multiple assistant turns of a tool loop merge into one bubble, and every `role: "compact"` entry surfaces as a `CompactMarkerMessage`. A live `compact` SSE event appends a `{role: "compact"}` entry to `rawMessages`; the marker appears on the next render.
 
-The projection also derives `stats: TurnStats` per assistant bubble (footer `model · $0.0164` + hover token breakdown in `MessageBubble`). Two mutually exclusive meta shapes feed it: history raws carry per-request `usage` and server-priced `request_cost_usd`, which sum across the turn; streaming raws carry turn-cumulative `turn_usage`/`turn_cost_usd` patched from SSE `usage` events, where the latest raw replaces the accumulation (summing would double-count). `null` marks a value that became unknown — the UI omits that row/segment. The web never prices tokens; it only sums server-computed costs.
+`buildRenderMessages()` also derives `TurnStats` for assistant footers:
 
-Session-state numbers live at the composer, not on bubbles: `useChat` derives `currentContext` (the latest turn reporting context occupancy; a compact marker stops the scan) and exposes `sessionCostUsd`, rendered by `InputArea` as a `27% · $0.42` cluster next to the send button. Mobile keeps only the percentage (the auto-compact warning signal); the cost segment is desktop-only.
+- History sums per-request `usage` and server-provided `request_cost_usd`.
+- Streaming uses the latest cumulative `turn_usage` and `turn_cost_usd` without summing prior events.
+- Compact requests count toward the turn, but do not replace normal context occupancy. If a marker splits the reply, only the final assistant segment owns the stats.
+- `null` means unknown and is omitted by the UI. Pricing stays on the server.
+
+The composer shows `context % · session cost`; assistant footers show model and turn cost. `currentContext` uses the latest post-compact context. Mobile shows only the percentage.
 
 Key design decisions:
 
@@ -127,7 +132,7 @@ Streaming state tracking:
 Manual compaction (`/compact`):
 
 - `compactSession()` posts `POST /api/sessions/{id}/compact` with the active provider/model and streams the returned `kind: "compact"` run through the normal SSE reader. No optimistic user/assistant message is created; a 409 attaches to the existing run using its `kind`.
-- Compact runs route SSE by kind: only the `compact` event reaches the reducer (appending the marker); an `error` event sets `compactError` and never touches the last assistant message. The same routing applies to `pending_events` replayed after a refresh, and `active_run.kind` restores the `Compacting…` state.
+- Compact runs send only `compact` to the reducer; errors set `compactError`. On completion, the UI reloads persisted history and session cost. Pending-event replay follows the same routing.
 - Compacting feedback lives in the message area, not the toolbar: while a compact run is active, `MessageList` renders a pending `CompactMarker` (same divider geometry, pulsing `compacting…` label) at the tail, which settles into the real `compacted` divider when the marker arrives. Failures render a quiet inline note (`compaction failed` / `nothing to compact`, full detail in `title`) in the same position from `compactError`, which clears on the next run or session change. The input area only reflects the shared busy state (disabled composer + stop button).
 
 Composer and attachments:

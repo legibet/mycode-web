@@ -340,4 +340,70 @@ describe("turn stats", () => {
       cost_usd: 0.03,
     });
   });
+
+  it("shows a compacted tool turn's totals on its final reply", () => {
+    const renderMessages = buildRenderMessages([
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "bash", input: {} }],
+        meta: {
+          context_window: 100_000,
+          usage: {
+            total_tokens: 1_000,
+            input_tokens: 900,
+            output_tokens: 100,
+          },
+          request_cost_usd: 0.01,
+        },
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            output: "ok",
+            metadata: null,
+            is_error: false,
+          },
+        ],
+      },
+      {
+        role: "compact",
+        content: [],
+        meta: {
+          context_window: 100_000,
+          usage: {
+            total_tokens: 1_200,
+            input_tokens: 1_100,
+            output_tokens: 100,
+          },
+          request_cost_usd: 0.005,
+        },
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        meta: {
+          context_window: 100_000,
+          usage: {
+            total_tokens: 500,
+            input_tokens: 450,
+            output_tokens: 50,
+          },
+          request_cost_usd: 0.002,
+        },
+      },
+    ]);
+
+    expect(expectChat(renderMessages[1]).stats).toBeUndefined();
+    expect(expectChat(renderMessages[3]).stats).toEqual({
+      input_tokens: 2_450,
+      output_tokens: 250,
+      context_tokens: 500,
+      context_window: 100_000,
+      cost_usd: 0.017,
+    });
+  });
 });

@@ -416,8 +416,10 @@ function foldTurnStats(
   const stats: TurnStats = { ...prev };
   if (contextWindow !== undefined) stats.context_window = contextWindow;
   // Context occupancy is the latest request's total, never a sum.
-  if (typeof usage["total_tokens"] === "number") {
-    stats.context_tokens = usage["total_tokens"];
+  // biome-ignore lint/complexity/useLiteralKeys: index-signature record requires bracket access
+  const totalTokens = usage["total_tokens"];
+  if (typeof totalTokens === "number") {
+    stats.context_tokens = totalTokens;
   }
   for (const key of TURN_TOKEN_KEYS) {
     const value = usage[key];
@@ -454,6 +456,19 @@ export function buildRenderMessages(
   const result: RenderMessage[] = [];
   const toolIndex: Record<string, ToolIndexEntry> = {};
   let currentAssistant: ChatMessage | null = null;
+  let turnStats: TurnStats | undefined;
+  let turnStatsOwnerIndex: number | null = null;
+
+  const commitTurnStats = () => {
+    if (turnStats && turnStatsOwnerIndex !== null) {
+      const owner = result[turnStatsOwnerIndex];
+      if (owner && !isCompactMarker(owner)) {
+        result[turnStatsOwnerIndex] = { ...owner, stats: turnStats };
+      }
+    }
+    turnStats = undefined;
+    turnStatsOwnerIndex = null;
+  };
 
   const ensureAssistantRenderMessage = (sourceIndex: number) => {
     if (currentAssistant) return currentAssistant;
@@ -467,6 +482,17 @@ export function buildRenderMessages(
     const blocks = getBlocks(message);
 
     if (role === "compact") {
+      const contextTokens = turnStats?.context_tokens;
+      turnStats = foldTurnStats(
+        turnStats,
+        message?.meta as MessageMeta | undefined,
+      );
+      // The summary request is billed into the turn, but its total is not the
+      // post-compact context occupancy. Keep the last normal request's value.
+      if (turnStats) {
+        if (contextTokens === undefined) delete turnStats.context_tokens;
+        else turnStats.context_tokens = contextTokens;
+      }
       result.push(createCompactMarker(sourceIndex));
       currentAssistant = null;
       continue;
@@ -495,6 +521,7 @@ export function buildRenderMessages(
       }
 
       if (userBlocks.length > 0) {
+        commitTurnStats();
         const userMsg: ChatMessage = {
           role: "user",
           content: userBlocks,
@@ -627,12 +654,13 @@ export function buildRenderMessages(
     } else {
       delete merged.meta;
     }
-    const stats = foldTurnStats(assistantMessage.stats, rawMeta);
-    if (stats) merged.stats = stats;
+    turnStats = foldTurnStats(turnStats, rawMeta);
+    if (turnStats) turnStatsOwnerIndex = messageIndex;
     currentAssistant = merged;
     result[messageIndex] = merged;
   }
 
+  commitTurnStats();
   return result.filter((message, index) => {
     if (isCompactMarker(message)) return true;
     return (

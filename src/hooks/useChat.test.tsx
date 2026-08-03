@@ -56,12 +56,11 @@ function renderChatHook(overrides?: Partial<Parameters<typeof useChat>[0]>) {
   );
 }
 
-function mockFetch(
-  routes: Record<
-    string,
-    Response | ((init?: RequestInit) => Promise<Response> | Response)
-  >,
-) {
+type MockResponse =
+  | Response
+  | ((init?: RequestInit) => Promise<Response> | Response);
+
+function mockFetch(routes: Record<string, MockResponse>) {
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -371,33 +370,7 @@ describe("useChat", () => {
     });
   });
 
-  it("exposes the session cost from a loaded session", async () => {
-    globalThis.localStorage.setItem(
-      "mycode.activeSessions",
-      JSON.stringify({ "/workspace/a": "session-2" }),
-    );
-    mockFetch({
-      "/api/sessions?cwd=": createJsonResponse({
-        sessions: [{ id: "session-2", title: "Done" }],
-      }),
-      "/api/sessions/session-2": createJsonResponse({
-        session: { id: "session-2", title: "Done" },
-        messages: [],
-        session_cost_usd: 0.42,
-        active_run: null,
-        pending_events: [],
-      }),
-    });
-
-    const { result } = renderChatHook();
-
-    await waitFor(() => {
-      expect(result.current.sessionLoading).toBe(false);
-      expect(result.current.sessionCostUsd).toBe(0.42);
-    });
-  });
-
-  it("lets usage events supersede the session cost; an absent value means unknown", async () => {
+  it("hides poisoned costs while retaining context occupancy", async () => {
     globalThis.localStorage.setItem(
       "mycode.activeSessions",
       JSON.stringify({ "/workspace/a": "session-2" }),
@@ -452,10 +425,7 @@ describe("useChat", () => {
       expect(result.current.messages).toHaveLength(2);
     });
 
-    // The replayed cumulative usage events supersede the loaded base; the
-    // last one poisoned the turn, so every derived number is unknown.
     expect(result.current.sessionCostUsd).toBeNull();
-    // Context occupancy stays known — the composer cluster keeps showing it.
     expect(result.current.currentContext).toEqual({
       tokens: 1_000,
       window: 100_000,
@@ -970,10 +940,8 @@ describe("useChat", () => {
   };
 
   function mockCompactSessionRoutes(
-    routes: Record<
-      string,
-      Response | ((init?: RequestInit) => Promise<Response> | Response)
-    >,
+    routes: Record<string, MockResponse>,
+    sessionResponse: MockResponse = createJsonResponse(COMPACT_SESSION),
   ) {
     saveActiveSession("/workspace/a", "session-c");
     return mockFetch({
@@ -982,31 +950,46 @@ describe("useChat", () => {
       }),
       // Longest prefix first: the /compact POST must not hit the session GET.
       ...routes,
-      "/api/sessions/session-c": createJsonResponse(COMPACT_SESSION),
+      "/api/sessions/session-c": sessionResponse,
     });
   }
 
-  it("starts a compact run without optimistic messages and appends one marker", async () => {
-    const fetchMock = mockCompactSessionRoutes({
-      "/api/sessions/session-c/compact": createJsonResponse({
-        run: {
-          id: "run-c",
-          session_id: "session-c",
-          kind: "compact",
-          status: "running",
-          last_seq: 0,
+  it("reloads the persisted marker and session cost after compaction", async () => {
+    let sessionState = { ...COMPACT_SESSION, session_cost_usd: 0.4 };
+    const fetchMock = mockCompactSessionRoutes(
+      {
+        "/api/sessions/session-c/compact": createJsonResponse({
+          run: {
+            id: "run-c",
+            session_id: "session-c",
+            kind: "compact",
+            status: "running",
+            last_seq: 0,
+          },
+        }),
+        "/api/runs/run-c/stream?after=0": () => {
+          sessionState = {
+            ...sessionState,
+            messages: [
+              ...sessionState.messages,
+              { role: "compact", content: [] },
+            ],
+            session_cost_usd: 0.41,
+          };
+          return new Response(
+            'data: {"seq":1,"type":"compact"}\n\ndata: [DONE]\n\n',
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          );
         },
-      }),
-      "/api/runs/run-c/stream?after=0": new Response(
-        'data: {"seq":1,"type":"compact"}\n\ndata: [DONE]\n\n',
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
-    });
+      },
+      () => createJsonResponse(sessionState),
+    );
 
     const { result } = renderChatHook({ provider: "anthropic", model: "m1" });
     await waitFor(() => {
       expect(result.current.sessionLoading).toBe(false);
       expect(result.current.messages).toHaveLength(2);
+      expect(result.current.sessionCostUsd).toBe(0.4);
     });
 
     let compactPromise!: Promise<boolean>;
@@ -1029,6 +1012,7 @@ describe("useChat", () => {
 
     const marker = result.current.messages[2];
     expect(marker && isCompactMarker(marker)).toBe(true);
+    expect(result.current.sessionCostUsd).toBe(0.41);
     expect(result.current.compactError).toBeNull();
 
     const compactCall = fetchMock.mock.calls.find(([url]) =>
