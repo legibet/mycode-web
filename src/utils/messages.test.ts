@@ -269,7 +269,6 @@ describe("turn stats", () => {
         content: [{ type: "text", text: "done" }],
         meta: {
           usage: {
-            total_tokens: 2_000,
             input_tokens: 1_800,
             output_tokens: 200,
           },
@@ -281,7 +280,6 @@ describe("turn stats", () => {
     expect(expectChat(renderMessages[3]).stats).toEqual({
       input_tokens: 2_700,
       output_tokens: 300,
-      context_tokens: 2_000,
       turn_cost_usd: 0.01,
     });
   });

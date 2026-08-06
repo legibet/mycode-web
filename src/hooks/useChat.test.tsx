@@ -403,7 +403,7 @@ describe("useChat", () => {
     });
   });
 
-  it("uses the latest cumulative usage and session cost", async () => {
+  it("uses the latest cumulative usage and clears unknown context", async () => {
     globalThis.localStorage.setItem(
       "mycode.activeSessions",
       JSON.stringify({ "/workspace/a": "session-2" }),
@@ -414,7 +414,18 @@ describe("useChat", () => {
       }),
       "/api/sessions/session-2": createJsonResponse({
         session: { id: "session-2", title: "Running" },
-        messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        messages: [
+          { role: "user", content: [{ type: "text", text: "before" }] },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "previous" }],
+            meta: {
+              context_window: 100_000,
+              usage: { total_tokens: 500 },
+            },
+          },
+          { role: "user", content: [{ type: "text", text: "go" }] },
+        ],
         session_cost_usd: 0.4,
         active_run: {
           id: "run-2",
@@ -436,7 +447,6 @@ describe("useChat", () => {
           },
           {
             type: "usage",
-            context_tokens: 1_000,
             context_window: 100_000,
             turn_usage: { input_tokens: 1_800, output_tokens: 200 },
             turn_cost_usd: 0.02,
@@ -455,18 +465,14 @@ describe("useChat", () => {
 
     await waitFor(() => {
       expect(result.current.sessionLoading).toBe(false);
-      expect(result.current.messages).toHaveLength(2);
+      expect(result.current.messages).toHaveLength(4);
     });
 
     expect(result.current.sessionCostUsd).toBe(0.42);
-    expect(result.current.currentContext).toEqual({
-      tokens: 1_000,
-      window: 100_000,
-    });
-    expect(expectChat(result.current.messages[1]).stats).toEqual({
+    expect(result.current.currentContext).toBeNull();
+    expect(expectChat(result.current.messages[3]).stats).toEqual({
       input_tokens: 1_800,
       output_tokens: 200,
-      context_tokens: 1_000,
       context_window: 100_000,
       turn_cost_usd: 0.02,
     });

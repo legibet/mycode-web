@@ -382,8 +382,9 @@ const TURN_TOKEN_KEYS = [
  * - History: each raw carries its own per-request `usage` and server-priced
  *   `request_cost_usd`, which sum across the turn.
  *
- * Missing fields contribute nothing. A raw with no usage at all (for example,
- * a cancelled partial) also contributes nothing.
+ * Missing billing fields contribute nothing. A new usage record without a
+ * context total clears the previous occupancy; a raw with no usage at all
+ * (for example, a cancelled partial) contributes nothing.
  */
 function foldTurnStats(
   prev: TurnStats | undefined,
@@ -419,6 +420,7 @@ function foldTurnStats(
   // Context occupancy is the latest request's total, never a sum.
   // biome-ignore lint/complexity/useLiteralKeys: index-signature record requires bracket access
   const totalTokens = usage["total_tokens"];
+  delete stats.context_tokens;
   if (typeof totalTokens === "number") {
     stats.context_tokens = totalTokens;
   }

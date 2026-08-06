@@ -1323,17 +1323,21 @@ export function useChat(config: LocalConfig) {
     [chatState.rawMessages, chatState.toolRuntimeById],
   );
 
-  // Current context occupancy: the latest turn that reported one. A compact
-  // marker stops the scan — pre-compact occupancy no longer describes the
-  // session, so nothing shows until the next turn reports.
+  // Current context occupancy from the latest turn with usage. A compact
+  // marker stops the scan because pre-compact occupancy is no longer current.
   const currentContext = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
       if (!message || isCompactMarker(message)) break;
       const stats = message.role === "assistant" ? message.stats : undefined;
-      if (stats?.context_tokens && stats?.context_window) {
+      if (!stats) continue;
+      if (
+        stats.context_tokens !== undefined &&
+        stats.context_window !== undefined
+      ) {
         return { tokens: stats.context_tokens, window: stats.context_window };
       }
+      break;
     }
     return null;
   }, [messages]);
