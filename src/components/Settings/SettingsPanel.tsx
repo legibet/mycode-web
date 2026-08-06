@@ -154,6 +154,7 @@ function buildDraft(response: SettingsResponse): DraftState {
 function buildPayload(
   draft: DraftState,
   defaultProvider: string,
+  defaultReasoningEffort: ReasoningEffort | "",
 ): GlobalConfig {
   const config: GlobalConfig = {};
 
@@ -164,11 +165,8 @@ function buildPayload(
     draft.default_model.trim()
   )
     defaultSection.model = draft.default_model.trim();
-  if (
-    draft.default_reasoning_effort &&
-    draft.default_reasoning_effort !== "auto"
-  ) {
-    defaultSection.reasoning_effort = draft.default_reasoning_effort;
+  if (defaultReasoningEffort && defaultReasoningEffort !== "auto") {
+    defaultSection.reasoning_effort = defaultReasoningEffort;
   }
   if (draft.compact_threshold === "disabled") {
     defaultSection.compact_threshold = false;
@@ -281,7 +279,12 @@ export function SettingsPanel({
       ? runtimeDefaultProvider
       : (providerOptions[0] ?? "");
   const defaultProviderInfo = remoteConfig?.providers?.[defaultProvider];
-  const defaultModel = defaultProviderInfo?.models[0] ?? "";
+  const defaultModel =
+    remoteConfig?.default?.provider === defaultProvider
+      ? remoteConfig.default.model
+      : configuredDefaultProvider === defaultProvider && draft.default_model
+        ? draft.default_model
+        : (defaultProviderInfo?.models[0] ?? "");
   const effortOptions = getReasoningEffortOptions(
     remoteConfig,
     defaultProvider,
@@ -292,6 +295,9 @@ export function SettingsPanel({
     effortOptions.includes(draft.default_reasoning_effort)
       ? draft.default_reasoning_effort
       : "auto";
+  const savedReasoningEffort = effortOptions.length
+    ? defaultReasoningEffort
+    : draft.default_reasoning_effort;
 
   const hasInvalidProvider =
     duplicateNames.size > 0 ||
@@ -344,7 +350,7 @@ export function SettingsPanel({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          config: buildPayload(draft, defaultProvider),
+          config: buildPayload(draft, defaultProvider, savedReasoningEffort),
         }),
       });
       if (!res.ok) {
