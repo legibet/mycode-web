@@ -278,13 +278,19 @@ export function SettingsPanel({
     : providerOptions.includes(runtimeDefaultProvider)
       ? runtimeDefaultProvider
       : (providerOptions[0] ?? "");
-  const defaultProviderInfo = remoteConfig?.providers?.[defaultProvider];
+  const defaultProviderDraft = draft.providers.find(
+    (provider) => provider.name.trim() === defaultProvider,
+  );
+  // Resolve from the global draft; remoteConfig.default includes project overrides.
   const defaultModel =
-    remoteConfig?.default?.provider === defaultProvider
-      ? remoteConfig.default.model
-      : configuredDefaultProvider === defaultProvider && draft.default_model
-        ? draft.default_model
-        : (defaultProviderInfo?.models[0] ?? "");
+    defaultProviderDraft?.models[0] ||
+    (configuredDefaultProvider === defaultProvider
+      ? draft.default_model.trim()
+      : "") ||
+    providerTypeDefaultModels[
+      defaultProviderDraft?.type || defaultProvider
+    ]?.[0] ||
+    "";
   const effortOptions = getReasoningEffortOptions(
     remoteConfig,
     defaultProvider,
