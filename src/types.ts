@@ -2,19 +2,20 @@ import type { CSSProperties } from "react";
 
 export type Theme = "light" | "dark" | "system";
 export type ReasoningEffort =
-  | ""
   | "auto"
   | "none"
+  | "minimal"
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 
 export interface LocalConfig {
   provider: string;
   model: string;
   cwd: string;
-  reasoningEffort: ReasoningEffort;
+  reasoningEffort: ReasoningEffort | "";
 }
 
 export interface ProviderInfo {
@@ -26,6 +27,7 @@ export interface ProviderInfo {
   has_api_key: boolean;
   supports_reasoning_effort?: boolean;
   reasoning_models?: string[];
+  reasoning_efforts?: Record<string, ReasoningEffort[]>;
   reasoning_effort?: ReasoningEffort | null;
   supports_image_input?: boolean;
   image_input_models?: string[];

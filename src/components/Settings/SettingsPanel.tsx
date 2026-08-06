@@ -23,7 +23,10 @@ import type {
   Theme,
 } from "../../types";
 import { cn } from "../../utils/cn";
-import { isReasoningEffort } from "../../utils/config";
+import {
+  getReasoningEffortOptions,
+  isReasoningEffort,
+} from "../../utils/config";
 import { useTheme } from "../ThemeProvider";
 import { Field, NativeSelect, Section, Segmented, TextInput } from "./controls";
 import { ProviderCard, type ProviderDraft } from "./ProviderCard";
@@ -161,7 +164,10 @@ function buildPayload(
     draft.default_model.trim()
   )
     defaultSection.model = draft.default_model.trim();
-  if (draft.default_reasoning_effort) {
+  if (
+    draft.default_reasoning_effort &&
+    draft.default_reasoning_effort !== "auto"
+  ) {
     defaultSection.reasoning_effort = draft.default_reasoning_effort;
   }
   if (draft.compact_threshold === "disabled") {
@@ -235,7 +241,6 @@ export function SettingsPanel({
 
   const providerTypes =
     settings?.options.provider_types ?? EMPTY_PROVIDER_TYPES;
-  const effortOptions = settings?.options.reasoning_efforts ?? [];
   const envByName = settings?.env ?? {};
   const providerTypeEnvVars = settings?.provider_type_env_vars ?? {};
   const providerTypeDefaultModels =
@@ -275,6 +280,18 @@ export function SettingsPanel({
     : providerOptions.includes(runtimeDefaultProvider)
       ? runtimeDefaultProvider
       : (providerOptions[0] ?? "");
+  const defaultProviderInfo = remoteConfig?.providers?.[defaultProvider];
+  const defaultModel = defaultProviderInfo?.models[0] ?? "";
+  const effortOptions = getReasoningEffortOptions(
+    remoteConfig,
+    defaultProvider,
+    defaultModel,
+  );
+  const defaultReasoningEffort =
+    draft.default_reasoning_effort &&
+    effortOptions.includes(draft.default_reasoning_effort)
+      ? draft.default_reasoning_effort
+      : "auto";
 
   const hasInvalidProvider =
     duplicateNames.size > 0 ||
@@ -434,6 +451,7 @@ export function SettingsPanel({
                         ...prev,
                         default_provider: e.target.value,
                         default_model: "",
+                        default_reasoning_effort: "",
                       }))
                     }
                   >
@@ -445,24 +463,26 @@ export function SettingsPanel({
                   </NativeSelect>
                 </Field>
               )}
-              <Field label="Reasoning">
-                <NativeSelect
-                  value={draft.default_reasoning_effort || "auto"}
-                  onChange={(e) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      default_reasoning_effort: e.target
-                        .value as ReasoningEffort,
-                    }))
-                  }
-                >
-                  {effortOptions.map((effort) => (
-                    <option key={effort} value={effort}>
-                      {effort}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </Field>
+              {effortOptions.length > 0 && (
+                <Field label="Reasoning">
+                  <NativeSelect
+                    value={defaultReasoningEffort}
+                    onChange={(e) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        default_reasoning_effort: e.target
+                          .value as ReasoningEffort,
+                      }))
+                    }
+                  >
+                    {effortOptions.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+              )}
               <Field
                 label="Compact"
                 hint={

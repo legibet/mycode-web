@@ -150,6 +150,6 @@ Composer and attachments:
 Web UI config is persisted to `localStorage`:
 
 - `provider`, `model`, `cwd`, `reasoningEffort`
-- `auto` and empty string both mean "do not send reasoning_effort to server"
-- The reasoning effort selector in the sidebar only renders when `supports_reasoning_effort` is true AND the current model appears in `reasoning_models` (from `GET /api/config`)
+- Empty string inherits the configured default; `auto` is sent explicitly to leave effort unspecified
+- The input-area effort selector uses `providers[name].reasoning_efforts[model]`; it renders only when the provider supports effort and the model has non-empty values. When the map is absent, it falls back to the legacy `reasoning_models` and `reasoning_effort_options` fields
 - Settings editor options come from `provider_type_env_vars` and `provider_type_default_models`

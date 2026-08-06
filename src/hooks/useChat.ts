@@ -759,10 +759,7 @@ export function useChat(config: LocalConfig) {
         provider: config.provider || undefined,
         model: config.model || undefined,
         cwd: config.cwd,
-        reasoning_effort:
-          config.reasoningEffort && config.reasoningEffort !== "auto"
-            ? config.reasoningEffort
-            : undefined,
+        reasoning_effort: config.reasoningEffort || undefined,
       };
 
       // Use structured `input` blocks when any attachment is present.
@@ -882,10 +879,7 @@ export function useChat(config: LocalConfig) {
             provider: config.provider || undefined,
             model: config.model || undefined,
             cwd: config.cwd,
-            reasoning_effort:
-              config.reasoningEffort && config.reasoningEffort !== "auto"
-                ? config.reasoningEffort
-                : undefined,
+            reasoning_effort: config.reasoningEffort || undefined,
           }),
         });
 

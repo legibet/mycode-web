@@ -102,6 +102,39 @@ describe("useChat", () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it("sends auto as an explicit reasoning effort override", async () => {
+    const fetchMock = mockFetch({
+      "/api/sessions?cwd=": createJsonResponse({ sessions: [] }),
+      "/api/chat": createJsonResponse({
+        run: {
+          id: "run-auto",
+          session_id: "draft-auto",
+          kind: "chat",
+          status: "running",
+          last_seq: 0,
+        },
+        session: { id: "draft-auto", title: "Draft" },
+      }),
+      "/api/runs/run-auto/stream?after=0": new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    });
+    const { result } = renderChatHook({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      reasoningEffort: "auto",
+    });
+    await waitFor(() => expect(result.current.sessionLoading).toBe(false));
+
+    await result.current.send({ text: "hello", workspaceFiles: [] });
+
+    const chatCall = fetchMock.mock.calls.find(([url]) => url === "/api/chat");
+    expect(JSON.parse(String(chatCall?.[1]?.body)).reasoning_effort).toBe(
+      "auto",
+    );
+  });
+
   it("sends text attachments as attachment text blocks", async () => {
     const fetchMock = mockFetch({
       "/api/sessions?cwd=": createJsonResponse({ sessions: [] }),

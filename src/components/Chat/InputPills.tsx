@@ -30,7 +30,7 @@ import type {
 import { cn } from "../../utils/cn";
 import {
   getDefaultReasoningEffort,
-  isReasoningEffort,
+  getReasoningEffortOptions,
 } from "../../utils/config";
 
 const TRIGGER_BTN =
@@ -174,23 +174,20 @@ export const EffortTrigger = memo(function EffortTrigger({
 }: EffortTriggerProps) {
   const [open, setOpen] = useState(false);
 
-  const activeProviderInfo = remoteConfig?.providers?.[config.provider];
-  const reasoningModels = activeProviderInfo?.reasoning_models || [];
-  const supportsEffort = Boolean(
-    activeProviderInfo?.supports_reasoning_effort &&
-      reasoningModels.includes(config.model),
+  const options = getReasoningEffortOptions(
+    remoteConfig,
+    config.provider,
+    config.model,
   );
-  const options = remoteConfig?.reasoning_effort_options || [];
 
   const current =
     config.reasoningEffort ||
     getDefaultReasoningEffort(remoteConfig, config.provider, config.model) ||
     "auto";
 
-  if (!supportsEffort) return null;
+  if (!options.length) return null;
 
   const select = (value: ReasoningEffort) => {
-    if (!isReasoningEffort(value)) return;
     onUpdateConfig({ ...config, reasoningEffort: value });
     setOpen(false);
   };
