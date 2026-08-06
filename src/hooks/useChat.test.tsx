@@ -403,7 +403,7 @@ describe("useChat", () => {
     });
   });
 
-  it("hides poisoned costs while retaining context occupancy", async () => {
+  it("uses the latest cumulative usage and session cost", async () => {
     globalThis.localStorage.setItem(
       "mycode.activeSessions",
       JSON.stringify({ "/workspace/a": "session-2" }),
@@ -430,17 +430,17 @@ describe("useChat", () => {
             context_tokens: 1_000,
             context_window: 100_000,
             turn_usage: { input_tokens: 900, output_tokens: 100 },
-            cost_usd: 0.01,
+            turn_cost_usd: 0.01,
             session_cost_usd: 0.41,
             seq: 2,
           },
-          // SSE drops null fields: a poisoned turn arrives without cost
-          // fields, and both the turn and session totals become unknown.
           {
             type: "usage",
             context_tokens: 1_000,
             context_window: 100_000,
-            turn_usage: { input_tokens: null, output_tokens: null },
+            turn_usage: { input_tokens: 1_800, output_tokens: 200 },
+            turn_cost_usd: 0.02,
+            session_cost_usd: 0.42,
             seq: 3,
           },
         ],
@@ -458,17 +458,17 @@ describe("useChat", () => {
       expect(result.current.messages).toHaveLength(2);
     });
 
-    expect(result.current.sessionCostUsd).toBeNull();
+    expect(result.current.sessionCostUsd).toBe(0.42);
     expect(result.current.currentContext).toEqual({
       tokens: 1_000,
       window: 100_000,
     });
     expect(expectChat(result.current.messages[1]).stats).toEqual({
-      input_tokens: null,
-      output_tokens: null,
+      input_tokens: 1_800,
+      output_tokens: 200,
       context_tokens: 1_000,
       context_window: 100_000,
-      cost_usd: null,
+      turn_cost_usd: 0.02,
     });
   });
 

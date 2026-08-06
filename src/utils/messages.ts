@@ -382,9 +382,8 @@ const TURN_TOKEN_KEYS = [
  * - History: each raw carries its own per-request `usage` and server-priced
  *   `request_cost_usd`, which sum across the turn.
  *
- * null marks a value that became unknown: a null token class poisons that
- * row, a request with usage but no price poisons the turn cost. A raw with
- * no usage at all (cancelled partial) contributes nothing.
+ * Missing fields contribute nothing. A raw with no usage at all (for example,
+ * a cancelled partial) also contributes nothing.
  */
 function foldTurnStats(
   prev: TurnStats | undefined,
@@ -406,7 +405,9 @@ function foldTurnStats(
       const value = meta.turn_usage?.[key];
       if (value !== undefined) stats[key] = value;
     }
-    if (meta.turn_cost_usd !== undefined) stats.cost_usd = meta.turn_cost_usd;
+    if (typeof meta.turn_cost_usd === "number") {
+      stats.turn_cost_usd = meta.turn_cost_usd;
+    }
     return stats;
   }
 
@@ -423,14 +424,10 @@ function foldTurnStats(
   }
   for (const key of TURN_TOKEN_KEYS) {
     const value = usage[key];
-    if (stats[key] === null || value === undefined) continue;
-    stats[key] = typeof value === "number" ? (stats[key] ?? 0) + value : null;
+    if (typeof value === "number") stats[key] = (stats[key] ?? 0) + value;
   }
-  if (stats.cost_usd !== null) {
-    stats.cost_usd =
-      typeof meta.request_cost_usd === "number"
-        ? (stats.cost_usd ?? 0) + meta.request_cost_usd
-        : null;
+  if (typeof meta.request_cost_usd === "number") {
+    stats.turn_cost_usd = (stats.turn_cost_usd ?? 0) + meta.request_cost_usd;
   }
   return stats;
 }

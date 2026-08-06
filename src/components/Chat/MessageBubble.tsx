@@ -160,7 +160,7 @@ function turnStatsEqual(
     prev.reasoning_tokens === next.reasoning_tokens &&
     prev.context_tokens === next.context_tokens &&
     prev.context_window === next.context_window &&
-    prev.cost_usd === next.cost_usd
+    prev.turn_cost_usd === next.turn_cost_usd
   );
 }
 
@@ -221,7 +221,9 @@ function TurnStatsFooter({
   stats?: TurnStats | undefined;
 }) {
   const cost =
-    typeof stats?.cost_usd === "number" ? formatCost(stats.cost_usd) : null;
+    typeof stats?.turn_cost_usd === "number"
+      ? formatCost(stats.turn_cost_usd)
+      : null;
   const visible = [model, cost].filter(Boolean).join(" · ");
   if (!visible) return null;
 

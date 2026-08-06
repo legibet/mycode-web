@@ -229,11 +229,11 @@ describe("turn stats", () => {
       // Context occupancy is the last request's total, not a sum.
       context_tokens: 2_000,
       context_window: 100_000,
-      cost_usd: 0.03,
+      turn_cost_usd: 0.03,
     });
   });
 
-  it("skips usage-less records but poisons cost on unpriced usage", () => {
+  it("skips usage-less and unpriced records while keeping known cost", () => {
     const renderMessages = buildRenderMessages([
       { role: "user", content: [{ type: "text", text: "go" }] },
       // Cancelled partial: no usage at all — contributes nothing.
@@ -263,8 +263,7 @@ describe("turn stats", () => {
           },
         ],
       },
-      // Usage recorded but the server could not price it: the turn's token
-      // sums stay, its cost becomes unknown.
+      // Usage recorded but the server could not price it.
       {
         role: "assistant",
         content: [{ type: "text", text: "done" }],
@@ -283,7 +282,7 @@ describe("turn stats", () => {
       input_tokens: 2_700,
       output_tokens: 300,
       context_tokens: 2_000,
-      cost_usd: null,
+      turn_cost_usd: 0.01,
     });
   });
 
@@ -323,7 +322,6 @@ describe("turn stats", () => {
           turn_usage: {
             input_tokens: 2_400,
             output_tokens: 600,
-            reasoning_tokens: null,
           },
           turn_cost_usd: 0.03,
         },
@@ -333,11 +331,9 @@ describe("turn stats", () => {
     expect(expectChat(renderMessages[1]).stats).toEqual({
       input_tokens: 2_400,
       output_tokens: 600,
-      // A poisoned (null) class stays visible as unknown, not a number.
-      reasoning_tokens: null,
       context_tokens: 2_000,
       context_window: 100_000,
-      cost_usd: 0.03,
+      turn_cost_usd: 0.03,
     });
   });
 
@@ -403,7 +399,7 @@ describe("turn stats", () => {
       output_tokens: 250,
       context_tokens: 500,
       context_window: 100_000,
-      cost_usd: 0.017,
+      turn_cost_usd: 0.017,
     });
   });
 });

@@ -344,20 +344,17 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           `\n\n**Error:** ${event.message || "Unknown"}`,
         );
       } else if (event.type === "usage") {
-        // The event carries the turn's cumulative values; SSE drops null
-        // fields, so an absent field means the value became unknown. Every
-        // event overwrites the whole group — a partial patch would leave a
-        // stale number standing next to a poisoned one.
+        // The event carries the turn's cumulative values, so replace the
+        // previous snapshot instead of summing it again.
         const patch: Partial<MessageMeta> = {
           context_tokens: event.context_tokens ?? null,
-          turn_usage: event.turn_usage,
-          turn_cost_usd: event.cost_usd ?? null,
+          turn_cost_usd: event.turn_cost_usd ?? null,
         };
+        if (event.turn_usage) patch.turn_usage = event.turn_usage;
         if (typeof event.context_window === "number") {
           patch.context_window = event.context_window;
         }
         if (event.model) patch.model = event.model;
-        if (event.provider) patch.provider = event.provider;
         rawMessages = updateLatestAssistantMeta(rawMessages, patch);
         return {
           ...state,
