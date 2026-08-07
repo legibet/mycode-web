@@ -170,15 +170,22 @@ export const ProviderCard = memo(function ProviderCard({
         </Field>
 
         {draft.type === "openai_chat" && (
-          <Field label="Reasoning effort">
+          <Field
+            label="Reasoning effort"
+            hint="Enable if this endpoint accepts a reasoning effort level."
+          >
             <Checkbox.Root
               checked={draft.supports_reasoning_effort}
               onCheckedChange={(checked) =>
                 update({ supports_reasoning_effort: checked })
               }
-              className="group flex h-9 items-center gap-2.5 ml-2 cursor-pointer select-none"
+              aria-label="Reasoning effort supported"
+              className={cn(
+                "group flex h-9 items-center gap-2.5 px-2 cursor-pointer select-none",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+              )}
             >
-              <span className="flex size-4 items-center justify-center rounded-[4px] border border-border/60 transition-colors group-hover:border-border group-data-[checked]:border-accent group-data-[checked]:bg-accent">
+              <span className="flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-border/60 transition-colors group-hover:border-border group-data-[checked]:border-accent group-data-[checked]:bg-accent">
                 <Checkbox.Indicator>
                   <Check
                     className="size-3 text-accent-foreground"
@@ -186,9 +193,7 @@ export const ProviderCard = memo(function ProviderCard({
                   />
                 </Checkbox.Indicator>
               </span>
-              <span className="text-[12px] text-muted-foreground/70">
-                Enable if this endpoint accepts a reasoning effort level.
-              </span>
+              <span className="text-[13px] text-foreground/90">Supported</span>
             </Checkbox.Root>
           </Field>
         )}
