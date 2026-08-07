@@ -29,7 +29,7 @@ describe("InputArea", () => {
           provider: "anthropic",
           model: "text-only",
           cwd: "/workspace",
-          reasoningEffort: "",
+          reasoningEfforts: {},
         }}
         remoteConfig={null}
         onUpdateConfig={() => {}}
@@ -60,7 +60,7 @@ describe("InputArea", () => {
           provider: "anthropic",
           model: "text-only",
           cwd: "/workspace",
-          reasoningEffort: "",
+          reasoningEfforts: {},
         }}
         remoteConfig={null}
         onUpdateConfig={() => {}}

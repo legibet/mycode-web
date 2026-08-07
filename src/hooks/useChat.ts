@@ -22,6 +22,7 @@ import type {
   LocalConfig,
   MessageMeta,
   PermissionRequest,
+  RemoteConfig,
   RunInfo,
   RunKind,
   SessionResponse,
@@ -32,6 +33,7 @@ import type {
   WorkspaceFileReference,
 } from "../types";
 import { isCompactMarker } from "../types";
+import { getReasoningEffortOverride } from "../utils/config";
 import { randomId } from "../utils/id";
 import {
   appendAssistantDelta,
@@ -373,7 +375,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
   }
 }
 
-export function useChat(config: LocalConfig) {
+export function useChat(
+  config: LocalConfig,
+  remoteConfig?: RemoteConfig | null,
+) {
   const [chatState, dispatch] = useReducer(chatReducer, {
     messageSessionId: null,
     rawMessages: [],
@@ -756,7 +761,7 @@ export function useChat(config: LocalConfig) {
         provider: config.provider || undefined,
         model: config.model || undefined,
         cwd: config.cwd,
-        reasoning_effort: config.reasoningEffort || undefined,
+        reasoning_effort: getReasoningEffortOverride(config, remoteConfig),
       };
 
       // Use structured `input` blocks when any attachment is present.
@@ -844,6 +849,7 @@ export function useChat(config: LocalConfig) {
       config,
       fetchSessions,
       loading,
+      remoteConfig,
       setActiveSessionSnapshot,
       streamRun,
     ],
@@ -876,7 +882,7 @@ export function useChat(config: LocalConfig) {
             provider: config.provider || undefined,
             model: config.model || undefined,
             cwd: config.cwd,
-            reasoning_effort: config.reasoningEffort || undefined,
+            reasoning_effort: getReasoningEffortOverride(config, remoteConfig),
           }),
         });
 
@@ -950,6 +956,7 @@ export function useChat(config: LocalConfig) {
       config,
       fetchSessions,
       loading,
+      remoteConfig,
       setActiveSessionSnapshot,
       streamRun,
     ],

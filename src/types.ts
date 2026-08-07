@@ -15,7 +15,7 @@ export interface LocalConfig {
   provider: string;
   model: string;
   cwd: string;
-  reasoningEffort: ReasoningEffort | "";
+  reasoningEfforts: Record<string, ReasoningEffort>;
 }
 
 export interface ProviderInfo {
@@ -26,9 +26,7 @@ export interface ProviderInfo {
   base_url: string;
   has_api_key: boolean;
   supports_reasoning_effort?: boolean;
-  reasoning_models?: string[];
   reasoning_efforts?: Record<string, ReasoningEffort[]>;
-  reasoning_effort?: ReasoningEffort | null;
   supports_image_input?: boolean;
   image_input_models?: string[];
   supports_pdf_input?: boolean;
@@ -46,8 +44,6 @@ export interface RemoteConfig {
     provider: string;
     model: string;
   };
-  default_reasoning_effort?: ReasoningEffort | null;
-  reasoning_effort_options?: ReasoningEffort[];
   cwd?: string;
   cwd_exists?: boolean;
   project?: string;
@@ -407,7 +403,6 @@ export interface GlobalProviderEntry {
   api_key?: string | null;
   api_key_saved?: boolean;
   base_url?: string;
-  reasoning_effort?: string | null;
   /** Opt-in for a generic openai_chat endpoint that accepts the standard
    * top-level reasoning_effort. Ignored for other provider types. */
   supports_reasoning_effort?: boolean;
@@ -418,7 +413,6 @@ export interface GlobalConfig {
   default?: {
     provider?: string;
     model?: string;
-    reasoning_effort?: string | null;
     compact_threshold?: number | false | null;
   };
   permission?:
@@ -435,7 +429,6 @@ export interface SettingsResponse {
     provider_types: string[];
     permission_levels: PermissionLevel[];
     permission_modes: PermissionMode[];
-    reasoning_efforts: ReasoningEffort[];
   };
   env: Record<string, boolean>;
   provider_type_env_vars: Record<string, string[]>;

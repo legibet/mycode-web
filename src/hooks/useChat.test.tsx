@@ -44,15 +44,21 @@ function createJsonResponse(data: unknown): Response {
   });
 }
 
-function renderChatHook(overrides?: Partial<Parameters<typeof useChat>[0]>) {
+function renderChatHook(
+  overrides?: Partial<Parameters<typeof useChat>[0]>,
+  remoteConfig?: Parameters<typeof useChat>[1],
+) {
   return renderHook(() =>
-    useChat({
-      provider: "",
-      model: "",
-      cwd: "/workspace/a",
-      reasoningEffort: "",
-      ...overrides,
-    }),
+    useChat(
+      {
+        provider: "",
+        model: "",
+        cwd: "/workspace/a",
+        reasoningEfforts: {},
+        ...overrides,
+      },
+      remoteConfig,
+    ),
   );
 }
 
@@ -120,11 +126,27 @@ describe("useChat", () => {
         headers: { "Content-Type": "text/event-stream" },
       }),
     });
-    const { result } = renderChatHook({
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      reasoningEffort: "auto",
-    });
+    const { result } = renderChatHook(
+      {
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        reasoningEfforts: { "anthropic/claude-sonnet-5": "auto" },
+      },
+      {
+        providers: {
+          anthropic: {
+            name: "anthropic",
+            provider: "anthropic",
+            type: "anthropic",
+            models: ["claude-sonnet-5"],
+            base_url: "",
+            has_api_key: true,
+            supports_reasoning_effort: true,
+            reasoning_efforts: { "claude-sonnet-5": ["low"] },
+          },
+        },
+      },
+    );
     await waitFor(() => expect(result.current.sessionLoading).toBe(false));
 
     await result.current.send({ text: "hello", workspaceFiles: [] });

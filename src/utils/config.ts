@@ -1,6 +1,5 @@
 /**
- * Config normalization utilities: reasoning effort validation and
- * reconciling local state with server-provided defaults.
+ * Config normalization utilities and reasoning effort validation.
  */
 
 import type { LocalConfig, ReasoningEffort, RemoteConfig } from "../types";
@@ -26,30 +25,35 @@ export function getReasoningEffortOptions(
   const providerInfo = remoteConfig?.providers?.[providerName];
   if (!providerInfo?.supports_reasoning_effort) return [];
 
-  if (providerInfo.reasoning_efforts !== undefined) {
-    const efforts = providerInfo.reasoning_efforts[model] || [];
-    return efforts.length ? ["auto", ...efforts] : [];
-  }
-
-  const reasoningModels = providerInfo.reasoning_models || [];
-  return reasoningModels.includes(model)
-    ? remoteConfig?.reasoning_effort_options || []
-    : [];
+  const efforts = providerInfo.reasoning_efforts?.[model] || [];
+  return efforts.length ? ["auto", ...efforts] : [];
 }
 
-export function getDefaultReasoningEffort(
-  remoteConfig: RemoteConfig | null,
-  providerName: string,
-  model: string,
-): ReasoningEffort | "" {
-  const providerInfo = remoteConfig?.providers?.[providerName];
-  const options = getReasoningEffortOptions(remoteConfig, providerName, model);
-  if (!options.length) return "";
+export function reasoningEffortKey(provider: string, model: string): string {
+  return `${provider}/${model}`;
+}
 
-  const effort =
-    providerInfo?.reasoning_effort || remoteConfig?.default_reasoning_effort;
+export function getReasoningEffort(
+  config: LocalConfig,
+  remoteConfig?: RemoteConfig | null,
+): ReasoningEffort {
+  return getReasoningEffortOverride(config, remoteConfig) || "auto";
+}
 
-  return isReasoningEffort(effort) && options.includes(effort) ? effort : "";
+export function getReasoningEffortOverride(
+  config: LocalConfig,
+  remoteConfig?: RemoteConfig | null,
+): ReasoningEffort | undefined {
+  const saved =
+    config.reasoningEfforts[reasoningEffortKey(config.provider, config.model)];
+  if (!saved || !remoteConfig) return undefined;
+  return getReasoningEffortOptions(
+    remoteConfig,
+    config.provider,
+    config.model,
+  ).includes(saved)
+    ? saved
+    : undefined;
 }
 
 export function normalizeConfigWithRemoteDefaults(
@@ -64,22 +68,9 @@ export function normalizeConfigWithRemoteDefaults(
   const providerInfo = providers[provider];
   const modelChanged = !providerInfo?.models?.includes(config.model);
   const model = modelChanged ? providerInfo?.models?.[0] || "" : config.model;
-  const effortOptions = getReasoningEffortOptions(
-    remoteConfig,
-    provider,
-    model,
-  );
-  const reasoningEffort =
-    providerChanged ||
-    modelChanged ||
-    (config.reasoningEffort && !effortOptions.includes(config.reasoningEffort))
-      ? ""
-      : config.reasoningEffort;
-
   return {
     ...config,
     provider,
     model,
-    reasoningEffort,
   };
 }

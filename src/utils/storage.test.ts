@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   loadActiveSession,
+  loadConfig,
   removeActiveSession,
   saveActiveSession,
 } from "./storage";
@@ -58,5 +59,25 @@ describe("storage", () => {
 
     expect(loadActiveSession("/workspace/a")).toBe("");
     expect(loadActiveSession("/workspace/b")).toBe("session-b");
+  });
+
+  it("keeps stable config fields when dropping the old effort value", () => {
+    localStorage.setItem(
+      "mycode_config",
+      JSON.stringify({
+        _v: 1,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        cwd: "/workspace",
+        reasoningEffort: "high",
+      }),
+    );
+
+    expect(loadConfig()).toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      cwd: "/workspace",
+      reasoningEfforts: {},
+    });
   });
 });

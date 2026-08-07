@@ -1,11 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  ReasoningEffort,
-  RemoteConfig,
-  SettingsResponse,
-} from "../../types";
+import type { RemoteConfig, SettingsResponse } from "../../types";
 import { SettingsPanel } from "./SettingsPanel";
 
 vi.mock("../../hooks/useMediaQuery", () => ({
@@ -38,10 +34,7 @@ const remoteConfig: RemoteConfig = {
   },
 };
 
-function createSettings(
-  model: string,
-  reasoningEffort: ReasoningEffort,
-): SettingsResponse {
+function createSettings(model: string): SettingsResponse {
   return {
     path: "/home/user/.mycode/config.json",
     exists: true,
@@ -49,14 +42,12 @@ function createSettings(
       default: {
         provider: "google",
         model,
-        reasoning_effort: reasoningEffort,
       },
     },
     options: {
       provider_types: ["google"],
       permission_levels: ["safe"],
       permission_modes: ["ask"],
-      reasoning_efforts: ["minimal", "low", "medium", "high", "max"],
     },
     env: {},
     provider_type_env_vars: {},
@@ -81,11 +72,7 @@ function renderSettings(settings: SettingsResponse) {
       remoteConfig={remoteConfig}
     />,
   );
-  const reasoningSelect = screen
-    .getByText("Reasoning")
-    .parentElement?.querySelector("select");
-  if (!reasoningSelect) throw new Error("Reasoning select not found");
-  return { fetchMock, reasoningSelect };
+  return { fetchMock };
 }
 
 async function saveSettings(user: ReturnType<typeof userEvent.setup>) {
@@ -104,16 +91,8 @@ function savedDefault(fetchMock: ReturnType<typeof vi.spyOn>) {
 describe("SettingsPanel", () => {
   it("uses the configured global model instead of the provider's first model", async () => {
     const user = userEvent.setup();
-    const settings = createSettings("gemini-3.1-pro-preview", "max");
-    const { fetchMock, reasoningSelect } = renderSettings(settings);
-
-    expect(reasoningSelect).toHaveValue("auto");
-    expect(
-      within(reasoningSelect).queryByRole("option", { name: "minimal" }),
-    ).toBeNull();
-    expect(
-      within(reasoningSelect).getByRole("option", { name: "high" }),
-    ).toBeInTheDocument();
+    const settings = createSettings("gemini-3.1-pro-preview");
+    const { fetchMock } = renderSettings(settings);
 
     await saveSettings(user);
 
@@ -121,16 +100,14 @@ describe("SettingsPanel", () => {
     expect(savedDefault(fetchMock).reasoning_effort).toBeUndefined();
   });
 
-  it("preserves a global effort when the project overrides the model", async () => {
+  it("does not write a global reasoning effort", async () => {
     const user = userEvent.setup();
-    const settings = createSettings("gemini-3.6-flash", "minimal");
-    const { fetchMock, reasoningSelect } = renderSettings(settings);
-
-    expect(reasoningSelect).toHaveValue("minimal");
+    const settings = createSettings("gemini-3.6-flash");
+    const { fetchMock } = renderSettings(settings);
 
     await saveSettings(user);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(savedDefault(fetchMock).reasoning_effort).toBe("minimal");
+    expect(savedDefault(fetchMock).reasoning_effort).toBeUndefined();
   });
 });

@@ -6,7 +6,6 @@
 import { Checkbox } from "@base-ui/react/checkbox";
 import { Check, Plus, X } from "lucide-react";
 import { type KeyboardEvent, memo, useId, useState } from "react";
-import type { ReasoningEffort } from "../../types";
 import { cn } from "../../utils/cn";
 import { Field, NativeSelect, TextInput } from "./controls";
 
@@ -22,9 +21,7 @@ export interface ProviderDraft {
    * loading + saving doesn't drop them. UI doesn't currently edit these. */
   model_overrides: Record<string, Record<string, unknown>>;
   base_url: string;
-  reasoning_effort: ReasoningEffort | "";
-  /** Opt-in to forward reasoning_effort. Only meaningful (and only rendered)
-   * for the generic openai_chat type. */
+  /** Opt-in for generic openai_chat endpoints that accept reasoning_effort. */
   supports_reasoning_effort: boolean;
   api_key_input: string;
   api_key_dirty: boolean;

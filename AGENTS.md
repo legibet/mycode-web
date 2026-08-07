@@ -149,7 +149,7 @@ Composer and attachments:
 
 Web UI config is persisted to `localStorage`:
 
-- `provider`, `model`, `cwd`, `reasoningEffort`
-- Empty string inherits the configured default; `auto` is sent explicitly to leave effort unspecified
-- The input-area effort selector uses `providers[name].reasoning_efforts[model]`; it renders only when the provider supports effort and the model has non-empty values. When the map is absent, it falls back to the legacy `reasoning_models` and `reasoning_effort_options` fields
+- `provider`, `model`, `cwd`, and `reasoningEfforts` keyed by `provider/model`
+- A missing model-specific effort uses `auto`; `auto` is stored explicitly when selected
+- The input-area effort selector uses `providers[name].reasoning_efforts[model]`; it renders only when the provider supports effort and the model has non-empty values
 - Settings editor options come from `provider_type_env_vars` and `provider_type_default_models`

@@ -29,8 +29,9 @@ import type {
 } from "../../types";
 import { cn } from "../../utils/cn";
 import {
-  getDefaultReasoningEffort,
+  getReasoningEffort,
   getReasoningEffortOptions,
+  reasoningEffortKey,
 } from "../../utils/config";
 
 const TRIGGER_BTN =
@@ -89,7 +90,6 @@ export const ModelTrigger = memo(function ModelTrigger({
       ...config,
       provider: item.providerKey,
       model: item.model,
-      reasoningEffort: "",
     });
     setOpen(false);
   };
@@ -180,15 +180,18 @@ export const EffortTrigger = memo(function EffortTrigger({
     config.model,
   );
 
-  const current =
-    config.reasoningEffort ||
-    getDefaultReasoningEffort(remoteConfig, config.provider, config.model) ||
-    "auto";
+  const current = getReasoningEffort(config, remoteConfig);
 
   if (!options.length) return null;
 
   const select = (value: ReasoningEffort) => {
-    onUpdateConfig({ ...config, reasoningEffort: value });
+    onUpdateConfig({
+      ...config,
+      reasoningEfforts: {
+        ...config.reasoningEfforts,
+        [reasoningEffortKey(config.provider, config.model)]: value,
+      },
+    });
     setOpen(false);
   };
 

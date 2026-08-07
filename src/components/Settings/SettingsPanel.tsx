@@ -17,16 +17,11 @@ import type {
   GlobalProviderEntry,
   PermissionLevel,
   PermissionMode,
-  ReasoningEffort,
   RemoteConfig,
   SettingsResponse,
   Theme,
 } from "../../types";
 import { cn } from "../../utils/cn";
-import {
-  getReasoningEffortOptions,
-  isReasoningEffort,
-} from "../../utils/config";
 import { useTheme } from "../ThemeProvider";
 import { Field, NativeSelect, Section, Segmented, TextInput } from "./controls";
 import { ProviderCard, type ProviderDraft } from "./ProviderCard";
@@ -51,7 +46,6 @@ interface DraftState {
    * uses the provider's first listed model when it is unset), but PUT replaces
    * the file wholesale so we pass it through while the provider is unchanged. */
   default_model: string;
-  default_reasoning_effort: ReasoningEffort | "";
   compact_threshold: string; // form-friendly; '' means unset, 'disabled' for false
   permission_level: PermissionLevel;
   permission_mode: PermissionMode;
@@ -61,7 +55,6 @@ interface DraftState {
 const INITIAL_DRAFT: DraftState = {
   default_provider: "",
   default_model: "",
-  default_reasoning_effort: "",
   compact_threshold: "",
   permission_level: "safe",
   permission_mode: "ask",
@@ -112,9 +105,6 @@ function buildDraft(response: SettingsResponse): DraftState {
   draft.default_provider = config.default?.provider ?? "";
   draft.default_model = config.default?.model ?? "";
 
-  const effort = config.default?.reasoning_effort;
-  if (isReasoningEffort(effort)) draft.default_reasoning_effort = effort;
-
   const ct = config.default?.compact_threshold;
   if (ct === false) draft.compact_threshold = "disabled";
   else if (typeof ct === "number") draft.compact_threshold = String(ct);
@@ -138,9 +128,6 @@ function buildDraft(response: SettingsResponse): DraftState {
         : Object.keys(entry.models ?? {}),
       model_overrides: entry.model_overrides ?? {},
       base_url: entry.base_url ?? "",
-      reasoning_effort: isReasoningEffort(entry.reasoning_effort)
-        ? entry.reasoning_effort
-        : "",
       supports_reasoning_effort: Boolean(entry.supports_reasoning_effort),
       api_key_input: typeof entry.api_key === "string" ? entry.api_key : "",
       api_key_dirty: false,
@@ -154,7 +141,6 @@ function buildDraft(response: SettingsResponse): DraftState {
 function buildPayload(
   draft: DraftState,
   defaultProvider: string,
-  defaultReasoningEffort: ReasoningEffort | "",
 ): GlobalConfig {
   const config: GlobalConfig = {};
 
@@ -165,9 +151,6 @@ function buildPayload(
     draft.default_model.trim()
   )
     defaultSection.model = draft.default_model.trim();
-  if (defaultReasoningEffort && defaultReasoningEffort !== "auto") {
-    defaultSection.reasoning_effort = defaultReasoningEffort;
-  }
   if (draft.compact_threshold === "disabled") {
     defaultSection.compact_threshold = false;
   } else if (draft.compact_threshold.trim()) {
@@ -202,7 +185,6 @@ function buildPayload(
       }
     }
     if (p.base_url.trim()) entry.base_url = p.base_url.trim();
-    if (p.reasoning_effort) entry.reasoning_effort = p.reasoning_effort;
     if (p.type === "openai_chat" && p.supports_reasoning_effort)
       entry.supports_reasoning_effort = true;
     // api_key three-state: dirty → string (incl. empty=clear); not dirty → null=keep.
@@ -278,33 +260,6 @@ export function SettingsPanel({
     : providerOptions.includes(runtimeDefaultProvider)
       ? runtimeDefaultProvider
       : (providerOptions[0] ?? "");
-  const defaultProviderDraft = draft.providers.find(
-    (provider) => provider.name.trim() === defaultProvider,
-  );
-  // Resolve from the global draft; remoteConfig.default includes project overrides.
-  const defaultModel =
-    defaultProviderDraft?.models[0] ||
-    (configuredDefaultProvider === defaultProvider
-      ? draft.default_model.trim()
-      : "") ||
-    providerTypeDefaultModels[
-      defaultProviderDraft?.type || defaultProvider
-    ]?.[0] ||
-    "";
-  const effortOptions = getReasoningEffortOptions(
-    remoteConfig,
-    defaultProvider,
-    defaultModel,
-  );
-  const defaultReasoningEffort =
-    draft.default_reasoning_effort &&
-    effortOptions.includes(draft.default_reasoning_effort)
-      ? draft.default_reasoning_effort
-      : "auto";
-  const savedReasoningEffort = effortOptions.length
-    ? defaultReasoningEffort
-    : draft.default_reasoning_effort;
-
   const hasInvalidProvider =
     duplicateNames.size > 0 ||
     draft.providers.some((p) => !p.name.trim() || !p.type);
@@ -337,7 +292,6 @@ export function SettingsPanel({
         models: [],
         model_overrides: {},
         base_url: "",
-        reasoning_effort: "",
         supports_reasoning_effort: false,
         api_key_input: "",
         api_key_dirty: false,
@@ -356,7 +310,7 @@ export function SettingsPanel({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          config: buildPayload(draft, defaultProvider, savedReasoningEffort),
+          config: buildPayload(draft, defaultProvider),
         }),
       });
       if (!res.ok) {
@@ -463,33 +417,12 @@ export function SettingsPanel({
                         ...prev,
                         default_provider: e.target.value,
                         default_model: "",
-                        default_reasoning_effort: "",
                       }))
                     }
                   >
                     {providerOptions.map((name) => (
                       <option key={name} value={name}>
                         {name}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                </Field>
-              )}
-              {effortOptions.length > 0 && (
-                <Field label="Reasoning">
-                  <NativeSelect
-                    value={defaultReasoningEffort}
-                    onChange={(e) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        default_reasoning_effort: e.target
-                          .value as ReasoningEffort,
-                      }))
-                    }
-                  >
-                    {effortOptions.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {effort}
                       </option>
                     ))}
                   </NativeSelect>

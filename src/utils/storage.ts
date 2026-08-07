@@ -14,13 +14,13 @@ const STORAGE_KEY = "mycode_config";
 const HISTORY_KEY = "mycode_cwd_history";
 const ACTIVE_SESSIONS_KEY = "mycode_active_sessions";
 const SIDEBAR_WIDTH_KEY = "mycode_sidebar_width";
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const DEFAULT_CONFIG: LocalConfig = {
   provider: "", // configured alias or raw provider id; empty = use server default
   model: "",
   cwd: ".",
-  reasoningEffort: "", // empty = use server/config default
+  reasoningEfforts: {},
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -37,15 +37,19 @@ function getString(
 
 function normalizeStoredConfig(record: Record<string, unknown>): LocalConfig {
   // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket access
-  const reasoningEffort = record["reasoningEffort"];
+  const rawEfforts = record["reasoningEfforts"];
+  const reasoningEfforts: LocalConfig["reasoningEfforts"] = {};
+  if (isRecord(rawEfforts)) {
+    for (const [key, value] of Object.entries(rawEfforts)) {
+      if (isReasoningEffort(value)) reasoningEfforts[key] = value;
+    }
+  }
 
   return {
     provider: getString(record, "provider", DEFAULT_CONFIG.provider),
     model: getString(record, "model", DEFAULT_CONFIG.model),
     cwd: getString(record, "cwd", DEFAULT_CONFIG.cwd),
-    reasoningEffort: isReasoningEffort(reasoningEffort)
-      ? reasoningEffort
-      : DEFAULT_CONFIG.reasoningEffort,
+    reasoningEfforts,
   };
 }
 
@@ -54,8 +58,10 @@ export function loadConfig(): LocalConfig {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved) as unknown;
+      if (!isRecord(parsed)) return DEFAULT_CONFIG;
       // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket access
-      if (!isRecord(parsed) || parsed["_v"] !== SCHEMA_VERSION) {
+      const version = parsed["_v"];
+      if (version !== 1 && version !== SCHEMA_VERSION) {
         return DEFAULT_CONFIG;
       }
       return normalizeStoredConfig(parsed);

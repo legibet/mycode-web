@@ -170,7 +170,7 @@ function AppContent() {
     selectSession,
     deleteSession,
     clearSession,
-  } = useChat(config);
+  } = useChat(config, remoteConfig);
 
   const handleConfigUpdate = useCallback(
     (newConfig: LocalConfig) => {
